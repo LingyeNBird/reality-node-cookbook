@@ -11,7 +11,7 @@ deployment is baked in; fill them in for the task at hand.
 ```
 SKILL.md                              the procedure, with the pitfalls
 README.md                             this file: ordered commands
-scripts/orca_tty.py                   drive an Orca terminal: create/read/send/run-script
+scripts/orca_tty.py                   drive an Orca terminal; only handles it created itself
 scripts/ssh_harden.sh                 staged SSH hardening: key install, port move, password off
 scripts/sni_screen.py                 screen SNI candidates locally (DoH + ASN + TLS probe)
 scripts/sni_check_on_host.sh          verify candidates FROM THE NODE (decisive)
@@ -51,6 +51,12 @@ python scripts/orca_tty.py wait-prompt --terminal <HANDLE> --pattern ':~#\s*$'
 
 Ask the user not to toggle TUN / system proxy while the session is in use: an
 interactive SSH session over a TUN interface dies the moment TUN goes off.
+
+`orca_tty.py` enforces a **scope fence**. Orca's terminal listing is worktree-wide and
+includes previews of every tab, including the agent's own; the tool therefore records the
+handles it creates (`~/.orca-tty/created.json`), shows only those in `list`, and refuses
+to read or write any other terminal — with no override flag. Do not bypass it by calling
+`orca terminal read` / `orca terminal send` directly.
 
 #### 0.1 Harden SSH access (only if the host is not there yet)
 

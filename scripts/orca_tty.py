@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """Drive an Orca terminal from a script, safely.
 
-The two things this wrapper exists for:
+The three things this wrapper exists for:
 
 1. Multi-line shell scripts must reach the remote shell without quoting damage.
    `send-script` base64-encodes the file and runs `base64 -d | bash` on the far side.
 2. `terminal wait --for tui-idle` is unreliable (commands often finish before the
    wait begins, and the wait then blocks). `wait-quiet` instead watches the read
    cursor stop moving, and `wait-prompt` watches for an expected prompt.
+3. **Scope fence.** Terminal listings in a worktree include every other terminal in
+   that worktree, and their output is somebody else's business. This tool only ever
+   touches handles it created itself: `create` records them in a local allowlist
+   (`~/.orca-tty/created.json`), `list` shows nothing else, and every read or write
+   against an unknown handle is refused — including the terminal this agent is
+   running in. There is deliberately no flag to widen that.
 
 All reads are cursor-based, so output is never replayed.
 
@@ -25,6 +31,7 @@ import argparse
 import base64
 import json
 import os
+import pathlib
 import re
 import shutil
 import subprocess
@@ -57,6 +64,52 @@ def resolve_cli(override: str | None = None) -> str:
     return "orca"
 
 
+# ------------------------------------------------------------------ scope fence
+#
+# Orca's terminal listing is worktree-wide: it returns every terminal in the
+# worktree, previews included. Reading those is how an agent ends up looking at
+# output it was never given. So this tool keeps its own allowlist — handles it
+# created — and refuses everything else, with no override flag.
+
+STATE_DIR = pathlib.Path.home() / ".orca-tty"
+STATE_FILE = STATE_DIR / "created.json"
+MAX_TRACKED = 50
+
+
+def _load_created() -> dict:
+    try:
+        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_created(data: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(STATE_FILE)
+
+
+def _remember(handle: str, title: str) -> None:
+    data = _load_created()
+    data[handle] = {"title": title, "created": time.time()}
+    if len(data) > MAX_TRACKED:
+        data = dict(sorted(data.items(), key=lambda kv: kv[1].get("created", 0))[-MAX_TRACKED:])
+    _save_created(data)
+
+
+def _guard(handle: str) -> None:
+    """Hard stop for any handle this tool did not create itself."""
+    if handle in _load_created():
+        return
+    raise OrcaError(
+        f"refusing terminal {handle!r}: this tool only touches terminals it created "
+        "itself. Every other terminal in this worktree — including the one this agent "
+        "is running in — is out of scope. Run `create` and use the handle it prints."
+    )
+
+
 def _run(cli: str, args: list[str]) -> subprocess.CompletedProcess:
     proc = subprocess.run([cli, *args], capture_output=True, text=True,
                           encoding="utf-8", errors="replace")
@@ -79,6 +132,7 @@ def _json(cli: str, args: list[str]) -> dict:
 
 
 def read_terminal(cli: str, handle: str, cursor: str | None) -> tuple[list[str], str | None]:
+    _guard(handle)
     args = ["terminal", "read", "--terminal", handle, "--json"]
     if cursor is not None:
         args += ["--cursor", str(cursor)]
@@ -94,13 +148,27 @@ def read_terminal(cli: str, handle: str, cursor: str | None) -> tuple[list[str],
 
 
 def send_text(cli: str, handle: str, text: str) -> None:
+    _guard(handle)
     _json(cli, ["terminal", "send", "--terminal", handle, "--enter", "--json", "--text", text])
 
 
 def cmd_list(cli: str, _args) -> int:
+    """Only terminals this tool created, and never their output.
+
+    Orca's listing is worktree-wide and includes previews of every tab — including the
+    agent's own. Neither the other handles nor their content are returned here.
+    """
+    allowed = _load_created()
+    hidden = 0
     for term in _json(cli, ["terminal", "list", "--json"]).get("terminals", []):
-        preview = (term.get("preview") or "").replace("\n", " ⏎ ")[-90:]
-        print(f"{term['handle']}\t{term.get('title', '')}\t{preview}")
+        handle = term.get("handle", "")
+        if handle in allowed:
+            print(f"{handle}\t{term.get('title', '')}")
+        else:
+            hidden += 1
+    if hidden:
+        print(f"# {hidden} other terminal(s) withheld: out of scope for this tool",
+              file=sys.stderr)
     return 0
 
 
@@ -111,6 +179,7 @@ def cmd_create(cli: str, args) -> int:
     if args.command:
         cmd += ["--command", args.command]
     term = _json(cli, cmd)["terminal"]
+    _remember(term["handle"], term.get("title", ""))
     print(term["handle"])
     print(f"# title={term.get('title')} worktree={term.get('worktreeId')}", file=sys.stderr)
     return 0
@@ -234,6 +303,10 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_run_script)
 
     args = parser.parse_args(argv)
+    # Handles pasted from a Windows shell often carry a trailing \r; strip it so the
+    # allowlist comparison is about the handle, not the line ending.
+    if getattr(args, "terminal", None):
+        args.terminal = args.terminal.strip()
     cli = resolve_cli(args.orca)
     try:
         return args.fn(cli, args)

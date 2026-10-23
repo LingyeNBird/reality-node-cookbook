@@ -57,6 +57,7 @@ python scripts/orca_tty.py run-script --terminal <HANDLE> --file scripts/node_se
 
 Hard rules, learned the hard way:
 
+- **Only ever touch terminals this tool created.** Orca's terminal listing is worktree-wide and carries previews of every tab, including the agent's own. `scripts/orca_tty.py` records the handles it creates (`~/.orca-tty/created.json`), `list` hides every other terminal and returns no output for them, and any read or write through an unknown handle is refused — including the terminal the agent is running in. Never widen that: do not call `orca terminal read` / `orca terminal send` directly, and do not read the agent's own terminal "just to check something".
 - **Resolve the CLI once per session.** `ORCA_CLI_COMMAND` → `orca-dev` (dev checkout) → `orca-ide` (Linux, outside an Orca terminal — bare `orca` there is the GNOME screen reader) → `orca`.
 - **Never use `terminal wait --for tui-idle`.** Commands routinely finish before the wait starts, and the wait then hangs. Read with a cursor instead.
 - **Read before you write.** `terminal read --cursor <n>` returns only new lines; keep the cursor.
