@@ -273,8 +273,17 @@ def cmd_wait_prompt(cli: str, args) -> int:
         tail, cursor = read_terminal(cli, args.terminal, cursor)
         # A credential prompt is never a shell prompt, whatever the regex matches.
         if any(pattern.search(line) and not _is_auth_prompt(line) for line in tail):
+            was = _state(args.terminal)
             _set_state(args.terminal, "ready")
-            print(f"matched; cursor={cursor}")
+            if was != "ready":
+                # Only a session that just came through a login gets the marker. Such a
+                # session is a POSIX shell by construction (ssh), so `export` is the right
+                # form; typing it into a local PowerShell would only be noise.
+                _json(cli, ["terminal", "send", "--terminal", args.terminal, "--enter",
+                            "--json", "--text", "export ORCA=yes"])
+                print(f"matched; cursor={cursor} — session marked ORCA=yes")
+            else:
+                print(f"matched; cursor={cursor}")
             return 0
         time.sleep(args.interval)
     print(f"timeout after {args.timeout}s waiting for /{args.pattern}/ — the terminal is "

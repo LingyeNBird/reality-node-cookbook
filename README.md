@@ -6,6 +6,8 @@ VPS and handing back a working Clash/mihomo profile — driven through an Orca t
 Everything here is placeholder-based. No host, port, domain, key or path from any real
 deployment is baked in; fill them in for the task at hand.
 
+Code blocks are labelled: **`[SERVER]` = type it into the Orca terminal session, as root; `[LOCAL]` = run it on your own machine.** Every `[SERVER]` block is guarded on `ORCA=yes` and does nothing without that marker, so pasting it into the wrong shell is a no-op.
+
 ## Contents
 
 ```
@@ -66,6 +68,7 @@ question, not a puzzle.
 ### 0. Get a shell on the node
 
 ```bash
+# [LOCAL] your machine — these calls only drive the remote session
 python scripts/orca_tty.py list
 python scripts/orca_tty.py create --title "node" \
   --command 'ssh -o PreferredAuthentications=publickey -o IdentitiesOnly=yes -o ServerAliveInterval=15 -p <SSH_PORT> -i "<LOCAL_KEY_PATH>" root@<SERVER_IP>'
@@ -88,14 +91,18 @@ If the host still accepts a password, or SSH sits on the default port, fix that 
 everything below depends on a login you cannot be locked out of.
 
 ```bash
-bash scripts/ssh_harden.sh status                    # effective policy + which file wins
-bash scripts/ssh_harden.sh preflight                 # the traps that apply to this host
-bash scripts/ssh_harden.sh install-key <PUBKEY_FILE>
-#   -> prove a key-only login from OUTSIDE on the current port
-bash scripts/ssh_harden.sh stage-port <NEW_SSH_PORT> # old + new both listening
-#   -> prove a login from OUTSIDE on the NEW port: this is the gate
-bash scripts/ssh_harden.sh converge-port <NEW_SSH_PORT>
-bash scripts/ssh_harden.sh disable-password
+# [SERVER] inside the Orca terminal session, as root
+[ "${ORCA:-}" = yes ] || { echo "refusing: ORCA != yes — run this inside the Orca session" >&2; false; } && {
+bash /root/ssh_harden.sh status                    # effective policy + which file wins
+bash /root/ssh_harden.sh preflight                 # the traps that apply to this host
+echo <base64-of-pubkey> | base64 -d > /root/incoming.pub
+bash /root/ssh_harden.sh install-key - < /root/incoming.pub
+#   -> [LOCAL] prove a key-only login from OUTSIDE on the current port
+bash /root/ssh_harden.sh stage-port <NEW_SSH_PORT> # old + new both listening
+#   -> [LOCAL] prove a login from OUTSIDE on the NEW port: this is the gate
+bash /root/ssh_harden.sh converge-port <NEW_SSH_PORT>
+bash /root/ssh_harden.sh disable-password
+}
 ```
 
 Do not converge the port on the strength of a listening socket — a fresh login from
@@ -116,11 +123,11 @@ is actually listening, and rolls back when it is not.
 ### 1. Pick the SNI target
 
 ```bash
-# locally (uses DoH, so a fake-ip proxy cannot poison the answer)
+# [LOCAL] screen candidates on your machine (DoH, so a fake-ip proxy cannot poison it)
 python scripts/sni_screen.py --file candidates.txt
 
-# on the node — the only check that actually predicts whether the node will work
-bash scripts/sni_check_on_host.sh <candidate> [<candidate> ...]
+# [SERVER] then verify each survivor from the node — the decisive check
+[ "${ORCA:-}" = yes ] && bash /root/sni_check_on_host.sh <candidate> [<candidate> ...]
 ```
 
 Requirements: TLS 1.3 + X25519 + ALPN h2 + valid chain, no Cloudflare (ideally no CDN at
@@ -129,7 +136,8 @@ all), a real low-profile company site, and reachable from the node.
 ### 2. Provision the node
 
 ```bash
-SNI=<SNI> INSTALL=1 bash scripts/node_setup.sh
+# [SERVER] inside the Orca terminal — land node_setup.sh in /root first (SKILL.md §1)
+[ "${ORCA:-}" = yes ] && SNI=<SNI> INSTALL=1 bash /root/node_setup.sh
 ```
 
 Prints the six client values (public key, uuid, short id, server_name, port) and leaves
@@ -138,12 +146,14 @@ the private key at `/etc/<name>/config.json` mode 0600.
 Swapping the cover site later is the same command with a new `SNI` — secrets are reused:
 
 ```bash
-SNI=<NEW_SNI> bash scripts/node_setup.sh
+# [SERVER] inside the Orca terminal — same script, secrets are preserved
+[ "${ORCA:-}" = yes ] && SNI=<NEW_SNI> bash /root/node_setup.sh
 ```
 
 ### 3. Verify from outside
 
 ```bash
+# [LOCAL] both probes run from your machine, outside the node
 python scripts/node_verify.py --host <SERVER_IP> --sni <SNI> --repeat 3
 python scripts/client_e2e.py --sing-box <path-to-sing-box> \
     --server <SERVER_IP> --uuid <UUID> --sni <SNI> --pbk <PUBLIC_KEY> --sid <SHORT_ID>
@@ -159,6 +169,7 @@ Start from the user's own profile, replace only the node block
 (`templates/mihomo-proxy-block.yaml`), then assert the result:
 
 ```bash
+# [LOCAL] your machine
 python - <<'PY'
 import yaml, sys
 cfg = yaml.safe_load(open("<PROFILE_PATH>", encoding="utf-8"))

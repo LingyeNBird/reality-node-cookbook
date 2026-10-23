@@ -23,6 +23,13 @@
 #    line in sshd_config is inert — ListenStream on the socket unit owns the port.
 set -euo pipefail
 
+# Hard precondition: this runs only inside an Orca-managed session. The flag is exported
+# after the user has authenticated; anywhere else it means the caller took a shortcut.
+if [ "${ORCA:-}" != "yes" ]; then
+  printf 'refusing: ORCA is not "yes" — run this inside the Orca terminal session\n' >&2
+  exit 1
+fi
+
 SSHD_MAIN=/etc/ssh/sshd_config
 DROPIN_DIR=/etc/ssh/sshd_config.d
 HARDEN_DROPIN="${DROPIN_DIR}/20-hardening.conf"

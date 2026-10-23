@@ -13,6 +13,13 @@
 # because those are what the client profile needs.
 set -euo pipefail
 
+# Hard precondition: this runs only inside an Orca-managed session. The flag is exported
+# after the user has authenticated; anywhere else it means the caller took a shortcut.
+if [ "${ORCA:-}" != "yes" ]; then
+  printf 'refusing: ORCA is not "yes" — run this inside the Orca terminal session\n' >&2
+  exit 1
+fi
+
 SNI="${SNI:?set SNI=<domain>}"
 PORT="${PORT:-443}"
 NAME="${NAME:-singbox-reality}"

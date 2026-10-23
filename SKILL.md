@@ -15,6 +15,10 @@ Scripts referenced below live in `scripts/`, templates in `templates/`. Read `RE
 
 These are not advice. Each one exists because ignoring it broke something.
 
+Code blocks are labelled. **`[SERVER]` means: type it into the Orca terminal session opened in §1, as root — never into your own shell.** `[LOCAL]` means: run it on your own machine. A block that does both is split and labelled line by line.
+
+Every `[SERVER]` block opens with an `ORCA=yes` guard and does nothing when the marker is unset, so a block pasted into the wrong shell — or a session that was never authenticated — is a no-op instead of a remote change. The guard is written so it fails **without** killing an interactive shell.
+
 ### Scope and consent
 
 1. **MUST ask before acting.** Collect the six inputs in §0 first. MUST NOT infer the target from the machine.
@@ -26,6 +30,7 @@ These are not advice. Each one exists because ignoring it broke something.
 
 5. **MUST have a shell before running anything.** A created terminal is not a session, and its buffer is not output.
 6. **After `create`, the only permitted next action is `wait-prompt`.** MUST NOT send, land a script or run anything until `:~#` has been observed. Tooling enforces this: a handle in `awaiting-auth` rejects writes.
+   - **The session MUST be marked, and every `[SERVER]` block MUST check the mark.** Once the prompt appears, `export ORCA=yes` MUST be present in that shell (`wait-prompt` does this by itself). Every subsequent block provided for that session MUST open with the `ORCA=yes` guard and MUST do nothing when it is unset. A block that cannot be guarded MUST NOT be provided at all.
 7. **Credentials are the user's.** MUST NOT type or store a passphrase or password, MUST NOT assume it was entered, MUST NOT act while the screen still shows an auth prompt.
 8. **MUST only touch terminals this tool created.** MUST NOT read or write any other handle — including the agent's own terminal — and MUST NOT bypass the fence with a direct `orca terminal read|send`.
 9. **MUST land a script before invoking it,** and MUST NOT use `run-script` for a script that takes subcommands: it has no argument slot.
@@ -144,6 +149,7 @@ Everything after this runs **on the server**, so the shell comes first — inclu
 Use `scripts/orca_tty.py` rather than raw `orca` calls; it encodes the pitfalls.
 
 ```bash
+# [LOCAL] your machine — this only drives the remote session
 python scripts/orca_tty.py list
 python scripts/orca_tty.py create --title "node work" \
   --command 'ssh -o PreferredAuthentications=publickey -o IdentitiesOnly=yes -o ServerAliveInterval=15 -p <CURRENT_SSH_PORT> -i "<LOCAL_KEY_PATH>" root@<SERVER_IP>'
@@ -164,6 +170,7 @@ Two shapes. Picking the wrong one is why a parameterised script appears to do no
 `run-script` has no argument slot: it feeds the file to `bash` on stdin, so `ssh_harden.sh preflight` must be a separate `send`. Files that start life on the client — a public key, a config — travel the same way:
 
 ```bash
+# [LOCAL] the call is local; it types the file into the remote shell
 python scripts/orca_tty.py send --terminal <HANDLE> \
   --text 'echo <base64-of-file> | base64 -d > /root/incoming.pub'
 ```
@@ -186,6 +193,8 @@ Hard rules, learned the hard way:
 - If the host is still on password auth, or the user wants SSH moved to a high port, harden it now with `scripts/ssh_harden.sh`, **inside the session opened in §1**. It is staged so that no step can lock you out:
 
 ```bash
+# [SERVER] inside the Orca terminal session, as root
+[ "${ORCA:-}" = yes ] || { echo "refusing: ORCA != yes — run this inside the Orca session" >&2; false; } && {
 # land the script first (§1), then drive its subcommands
 bash /root/ssh_harden.sh status
 bash /root/ssh_harden.sh preflight
@@ -196,6 +205,7 @@ bash /root/ssh_harden.sh stage-port <user-chosen-port>
 #   -> prove a login from OUTSIDE on the NEW port: this is the gate
 bash /root/ssh_harden.sh converge-port <user-chosen-port>
 bash /root/ssh_harden.sh disable-password
+}
 ```
 
 The public key starts on the client while the script runs on the server, so it has to be staged first; `install-key -` also reads it from stdin. When the port moves, the session you are holding stays alive on the old port — expected, and actually useful as a fallback.
@@ -214,12 +224,15 @@ Never converge the port before a fresh login on the new port has succeeded from 
 ## 3. Recon (read-only)
 
 ```bash
+# [SERVER] inside the Orca terminal — nothing in this block is about your machine
+[ "${ORCA:-}" = yes ] || { echo "refusing: ORCA != yes — run this inside the Orca session" >&2; false; } && {
 . /etc/os-release; echo "$PRETTY_NAME $(uname -m)"; nproc; free -m | head -2; df -h / | tail -1
 command -v sing-box && sing-box version || echo NO_SING_BOX
 systemctl list-units --type=service --all --no-pager | grep -iE 'sing|xray|v2ray|reality'
 ss -lntup
 ufw status verbose
 curl -sS -o /dev/null -w 'github=%{http_code}\n' --max-time 15 https://api.github.com/
+}
 ```
 
 Leave any pre-existing proxy daemon strictly alone: different unit name, different port.
@@ -238,9 +251,10 @@ Leave any pre-existing proxy daemon strictly alone: different unit name, differe
 Screen candidates locally, then verify on the node:
 
 ```bash
-python scripts/sni_screen.py --file candidates.txt          # runs on your machine
-# copy the survivors over, then ON THE NODE:
-bash scripts/sni_check_on_host.sh <candidate> [<candidate> ...]
+# [LOCAL] screen candidates on your machine
+python scripts/sni_screen.py --file candidates.txt
+# [SERVER] then verify each survivor from the node — the decisive check
+[ "${ORCA:-}" = yes ] && bash /root/sni_check_on_host.sh <candidate> [<candidate> ...]
 ```
 
 `scripts/sni_screen.py` encodes two traps that silently produce garbage results:
@@ -253,12 +267,15 @@ Also expect: a mismatched SNI returns the upstream host's default vhost certific
 ## 5. Install sing-box
 
 ```bash
+# [SERVER] inside the Orca terminal
+[ "${ORCA:-}" = yes ] || { echo "refusing: ORCA != yes — run this inside the Orca session" >&2; false; } && {
 REL=$(curl -sS --max-time 25 https://api.github.com/repos/SagerNet/sing-box/releases/latest)
 VER=$(echo "$REL" | grep -oP '"tag_name":\s*"\K[^"]+' | head -1)
 curl -fsSL -o /tmp/sb.tgz "https://github.com/SagerNet/sing-box/releases/download/$VER/sing-box-${VER#v}-linux-amd64.tar.gz"
 sha256sum /tmp/sb.tgz
 tar xzf /tmp/sb.tgz -C /tmp && install -m0755 /tmp/sing-box-*/sing-box /usr/local/bin/sing-box
 sing-box version
+}
 ```
 
 Report the version and the tarball hash so the artifact is auditable.
@@ -268,7 +285,8 @@ Report the version and the tarball hash so the artifact is auditable.
 Use `scripts/node_setup.sh`. It is idempotent and SNI-swappable: on an existing config it **reuses** the private key, uuid and short_id and only changes `server_name` / `handshake.server`, which is exactly what a target swap needs.
 
 ```bash
-SNI=<domain> PORT=443 bash scripts/node_setup.sh
+# [SERVER] inside the Orca terminal — node_setup.sh lives there after §1
+[ "${ORCA:-}" = yes ] && SNI=<domain> PORT=443 bash /root/node_setup.sh
 ```
 
 What it enforces:
@@ -279,7 +297,7 @@ What it enforces:
 - `RestrictAddressFamilies` includes `AF_NETLINK` — sing-box aborts at startup without it.
 - A backup of the previous config on every change.
 
-The 1.14.x config shape (field names have moved across releases — always let `sing-box check` arbitrate):
+The 1.14.x config shape (field names have moved across releases — always let `sing-box check` arbitrate). **File on the server:** `/etc/<name>/config.json`, written by `node_setup.sh`; shown here for review.
 
 ```json
 {"inbounds":[{"type":"vless","listen":"::","listen_port":443,
@@ -294,10 +312,12 @@ The 1.14.x config shape (field names have moved across releases — always let `
 ## 7. Verify — three independent proofs
 
 ```bash
+# [LOCAL] both probes run from your machine, outside the node
 python scripts/node_verify.py --host <SERVER_IP> --port 443 --sni <SNI> --repeat 3
 python scripts/client_e2e.py --sing-box <path-to-sing-box> \
     --server <SERVER_IP> --port 443 --uuid <UUID> --sni <SNI> --pbk <PUBLIC_KEY> --sid <SHORT_ID>
-systemctl restart <unit>   # then re-run the camouflage probe
+# [SERVER] restart proof — then repeat the [LOCAL] camouflage probe above
+[ "${ORCA:-}" = yes ] && systemctl restart <unit>
 ```
 
 1. **Camouflage / relay** — a plain TLS client presenting the configured SNI must receive the **real certificate of that site**, because unauthenticated handshakes are relayed to the target. This is also the cheapest health check.
@@ -308,7 +328,7 @@ systemctl restart <unit>   # then re-run the camouflage probe
 
 ## 8. Client profile
 
-Copy the user's own template and change **only** the node block: `server`, `port`, `uuid`, `servername`, `reality-opts`. Keep their DNS, TUN, groups and rules byte-identical — they chose those.
+Copy the user's own template and change **only** the node block: `server`, `port`, `uuid`, `servername`, `reality-opts`. Keep their DNS, TUN, groups and rules byte-identical — they chose those. **File on the client:** this entry inside their profile — it is a credential, keep it outside any repository.
 
 ```yaml
 proxies:
@@ -335,8 +355,11 @@ Even when the user says they will import and test it themselves: parse the YAML,
 **Node suddenly unreachable, but the port is open.** TCP connects succeed while every TLS handshake dies (`ConnectionReset`, `unexpected EOF`, or "handshake read 0 bytes"), from unrelated networks too.
 
 ```bash
+# [SERVER] inside the Orca terminal — these read the node's own logs and its view of the target
+[ "${ORCA:-}" = yes ] || { echo "refusing: ORCA != yes — run this inside the Orca session" >&2; false; } && {
 journalctl -u <unit> -n 40 --no-pager | grep -i 'failed to dial dest'
 curl -sS -o /dev/null -w '%{http_code} %{time_total}\n' --max-time 12 https://<SNI>/
+}
 ```
 
 `REALITY: failed to dial dest: dial tcp <ip>:443: i/o timeout` plus a timing-out curl **from the node** means the target stopped being reachable from that server — common when a small shared host rate-limits or blocks the node's IP. Reality relays all probe traffic to the target, so the target sees sustained connections from one address. Check general egress (`curl https://api.github.com/`) and `uptime` first to rule out a wider outage, then swap the target.
