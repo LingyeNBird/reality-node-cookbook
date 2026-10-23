@@ -14,7 +14,7 @@ Code blocks are labelled: **`[SERVER]` = type it into the Orca terminal session,
 SKILL.md                              the procedure, with the pitfalls
 README.md                             this file: ordered commands
 scripts/orca_tty.py                   drive an Orca terminal; only handles it created itself
-scripts/ssh_keygen.sh                 generate the key + a passphrase file (strength enforced)
+scripts/ssh_keygen.py                 generate the key + a passphrase file (strength enforced)
 scripts/ssh_harden.sh                 staged SSH hardening: key install, port move, password off
 scripts/sni_check_on_host.sh          screen AND prove reachability from the node — the decision
 scripts/sni_screen.py                 optional local pre-filter (DoH + ASN + TLS probe); decides nothing
@@ -70,7 +70,7 @@ question, not a puzzle.
 
 ```bash
 # [LOCAL] no key yet? generate it here — passphrase is generated, stored 0600, never printed
-bash scripts/ssh_keygen.sh --dir <LOCAL_ARTIFACT_DIR>
+python scripts/ssh_keygen.py --dir <LOCAL_ARTIFACT_DIR>
 ```
 
 ```bash
