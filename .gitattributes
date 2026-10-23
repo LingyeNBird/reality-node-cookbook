@@ -1,0 +1,10 @@
+# Shell scripts must never carry CRLF: a stray \r makes `#!/usr/bin/env bash` fail
+# with "bad interpreter" on Linux. Pin LF for everything executable or config-like.
+*.sh        text eol=lf
+*.py        text eol=lf
+*.service   text eol=lf
+*.json      text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+.gitignore  text eol=lf
+*           text=auto

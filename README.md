@@ -12,6 +12,7 @@ deployment is baked in; fill them in for the task at hand.
 SKILL.md                              the procedure, with the pitfalls
 README.md                             this file: ordered commands
 scripts/orca_tty.py                   drive an Orca terminal: create/read/send/run-script
+scripts/ssh_harden.sh                 staged SSH hardening: key install, port move, password off
 scripts/sni_screen.py                 screen SNI candidates locally (DoH + ASN + TLS probe)
 scripts/sni_check_on_host.sh          verify candidates FROM THE NODE (decisive)
 scripts/node_setup.sh                 install/configure/restart the node (idempotent, SNI-swappable)
@@ -28,6 +29,8 @@ templates/mihomo-proxy-block.yaml     client proxy block
 |---|---|
 | `<SERVER_IP>` | node's public IPv4 |
 | `<SSH_PORT>` | node's SSH port |
+| `<NEW_SSH_PORT>` | SSH port to move to (Stage 0 only) |
+| `<PUBKEY_FILE>` | local path to the `.pub` file being installed |
 | `<LOCAL_KEY_PATH>` | local path to the encrypted private key |
 | `<SNI>` | the cover domain (`server_name` and handshake target) |
 | `<NODE_NAME>` | display name in the client profile |
@@ -48,6 +51,27 @@ python scripts/orca_tty.py wait-prompt --terminal <HANDLE> --pattern ':~#\s*$'
 
 Ask the user not to toggle TUN / system proxy while the session is in use: an
 interactive SSH session over a TUN interface dies the moment TUN goes off.
+
+#### 0.1 Harden SSH access (only if the host is not there yet)
+
+If the host still accepts a password, or SSH sits on the default port, fix that first —
+everything below depends on a login you cannot be locked out of.
+
+```bash
+bash scripts/ssh_harden.sh status                    # effective policy + which file wins
+bash scripts/ssh_harden.sh preflight                 # the traps that apply to this host
+bash scripts/ssh_harden.sh install-key <PUBKEY_FILE>
+#   -> prove a key-only login from OUTSIDE on the current port
+bash scripts/ssh_harden.sh stage-port <NEW_SSH_PORT> # old + new both listening
+#   -> prove a login from OUTSIDE on the NEW port: this is the gate
+bash scripts/ssh_harden.sh converge-port <NEW_SSH_PORT>
+bash scripts/ssh_harden.sh disable-password
+```
+
+Do not converge the port on the strength of a listening socket — a fresh login from
+outside on the new port is the only acceptable proof. `SKILL.md` §1 explains the two
+precedence traps this handles: drop-ins cannot override the main file above `Include`, and
+a socket-activated sshd ignores `Port` entirely (`ListenStream` on `ssh.socket` owns it).
 
 ### 1. Pick the SNI target
 

@@ -1,6 +1,6 @@
 ---
 name: singbox-reality-node-runbook
-description: End-to-end runbook for standing up a sing-box VLESS+Reality node on a remote VPS through an Orca terminal and handing back a Clash/mihomo profile — covers Orca session mechanics, port and non-Cloudflare SNI selection, secret generation, a hardened systemd unit, camouflage and end-to-end verification, and the failure modes that actually happen in production.
+description: End-to-end runbook for taking a bare VPS to a working sing-box VLESS+Reality node through an Orca terminal — staged SSH access hardening (key install, port move, password shutdown), Orca session mechanics, port and non-Cloudflare SNI selection, secret generation, a hardened systemd unit, camouflage and end-to-end verification, client profile generation, and the failure modes that actually happen in production.
 ---
 
 # sing-box VLESS+Reality node runbook
@@ -15,11 +15,29 @@ Scripts referenced below live in `scripts/`, templates in `templates/`. Read `RE
 2. An importable Clash/mihomo profile for the client.
 3. Evidence that both work: camouflage probe, real-client egress, restart survival.
 
-## 1. Preconditions
+## 1. Preconditions, and Stage 0 when they are not met
 
-- SSH access to the host already works with a **passphrase-protected key**. The passphrase must stay with the user (password manager). Never write it to disk, never echo it.
-- If the host still uses password auth, harden it first (key-only, port move). See the `orca-safe-ssh-key-cutover` skill for that whole flow, including the systemd **socket-activation** trap: on recent Ubuntu an `sshd_config` `Port` line is inert because `ssh.socket` owns the listener.
 - Confirm which server the user actually means before touching anything. Several hosts may be open in several tabs.
+- SSH access must work with a **passphrase-protected key**, and the passphrase stays with the user (a password manager). Never write it to disk, never echo it.
+- If the host is still on password auth, or the user wants SSH moved to a high port, do that first with `scripts/ssh_harden.sh`. It is staged so that no step can lock you out:
+
+```bash
+bash scripts/ssh_harden.sh status                    # effective policy + which file wins
+bash scripts/ssh_harden.sh preflight                 # what this host actually reads
+bash scripts/ssh_harden.sh install-key <pubkey.pub>  # append + fix modes
+#   -> prove a key-only login from OUTSIDE on the current port
+bash scripts/ssh_harden.sh stage-port <new-port>     # old + new both listening
+#   -> prove a login from OUTSIDE on the NEW port: this is the gate
+bash scripts/ssh_harden.sh converge-port <new-port>  # new port only
+bash scripts/ssh_harden.sh disable-password          # then prove password is refused
+```
+
+Two traps it encodes, both of which make a naive fix silently do nothing:
+
+- **A drop-in cannot override the main file above `Include`.** OpenSSH keeps the FIRST obtained value and `Include` sits partway down `sshd_config`, while vendor images often set live directives above it. `ssh_harden.sh status` prints which source wins for every keyword, and the setters edit that source rather than adding another file that loses.
+- **Recent Ubuntu is socket-activated** (`ssh.socket`, `Accept=no`): a `Port` line in `sshd_config` is inert because `ListenStream` on the socket unit owns the port. Change the unit, `daemon-reload`, then restart **both** `ssh.socket` and `ssh.service` so sshd inherits the new fds.
+
+Never converge the port before a fresh login on the new port has succeeded from outside. An existing session is not proof, and neither is a listening socket.
 
 ## 2. Driving the session through Orca
 
