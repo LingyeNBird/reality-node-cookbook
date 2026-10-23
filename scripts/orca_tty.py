@@ -14,6 +14,11 @@ The three things this wrapper exists for:
    (`~/.orca-tty/created.json`), `list` shows nothing else, and every read or write
    against an unknown handle is refused — including the terminal this agent is
    running in. There is deliberately no flag to widen that.
+4. **Session gate.** A created terminal is not a session: if `--command` looks like a
+   remote login it is recorded as `awaiting-auth`, and every write is refused until
+   `wait-prompt` has matched a real shell prompt. A password/passphrase prompt never
+   counts as a match, so the tool cannot be talked into sending commands into a login
+   screen.
 
 All reads are cursor-based, so output is never replayed.
 
@@ -75,6 +80,10 @@ STATE_DIR = pathlib.Path.home() / ".orca-tty"
 STATE_FILE = STATE_DIR / "created.json"
 MAX_TRACKED = 50
 
+# A `--command` that starts an interactive remote login means the terminal will sit at a
+# credential prompt; everything else is presumed ready to receive input.
+LOGIN_RE = re.compile(r"(^|[\s/\"'])(ssh|mosh|telnet|autossh|plink)(\s|$)")
+
 
 def _load_created() -> dict:
     try:
@@ -91,12 +100,45 @@ def _save_created(data: dict) -> None:
     tmp.replace(STATE_FILE)
 
 
-def _remember(handle: str, title: str) -> None:
+def _remember(handle: str, title: str, state: str = "ready") -> None:
     data = _load_created()
-    data[handle] = {"title": title, "created": time.time()}
+    data[handle] = {"title": title, "created": time.time(), "state": state}
     if len(data) > MAX_TRACKED:
         data = dict(sorted(data.items(), key=lambda kv: kv[1].get("created", 0))[-MAX_TRACKED:])
     _save_created(data)
+
+
+def _state(handle: str) -> str:
+    """'ready' once a shell prompt has been seen; 'awaiting-auth' before that."""
+    return _load_created().get(handle, {}).get("state", "ready")
+
+
+def _set_state(handle: str, state: str) -> None:
+    data = _load_created()
+    if handle in data:
+        data[handle]["state"] = state
+        _save_created(data)
+
+
+# A prompt that is asking for a credential is not a shell prompt, no matter what the
+# caller's regex says. 'root@host's password:' matches `root@.*` all too easily.
+AUTH_HINTS = ("password:", "passphrase for key", "continue connecting", "[yes/no]")
+
+
+def _is_auth_prompt(line: str) -> bool:
+    low = line.lower()
+    return any(h in low for h in AUTH_HINTS)
+
+
+def _require_ready(handle: str) -> None:
+    state = _state(handle)
+    if state == "ready":
+        return
+    raise OrcaError(
+        f"refusing to write to {handle}: it is still 'awaiting-auth'. A created terminal is "
+        "not a session. Run `wait-prompt --pattern ':~#\\s*$'` and let the user type the "
+        "credential; only after a real prompt is observed may anything be sent."
+    )
 
 
 def _guard(handle: str) -> None:
@@ -149,6 +191,7 @@ def read_terminal(cli: str, handle: str, cursor: str | None) -> tuple[list[str],
 
 def send_text(cli: str, handle: str, text: str) -> None:
     _guard(handle)
+    _require_ready(handle)
     _json(cli, ["terminal", "send", "--terminal", handle, "--enter", "--json", "--text", text])
 
 
@@ -179,14 +222,29 @@ def cmd_create(cli: str, args) -> int:
     if args.command:
         cmd += ["--command", args.command]
     term = _json(cli, cmd)["terminal"]
-    _remember(term["handle"], term.get("title", ""))
+    needs_login = bool(args.command) and bool(LOGIN_RE.search(args.command))
+    state = "awaiting-auth" if needs_login else "ready"
+    _remember(term["handle"], term.get("title", ""), state)
     print(term["handle"])
-    print(f"# title={term.get('title')} worktree={term.get('worktreeId')}", file=sys.stderr)
+    print(f"# title={term.get('title')} worktree={term.get('worktreeId')} state={state}",
+          file=sys.stderr)
+    if needs_login:
+        print("# next: wait-prompt --pattern ':~#\\s*$'  — the user types the credential",
+              file=sys.stderr)
     return 0
 
 
 def cmd_read(cli: str, args) -> int:
     tail, cursor = read_terminal(cli, args.terminal, args.cursor)
+    if _state(args.terminal) != "ready":
+        # Nothing on stdout: a caller that pipes stdout must not be able to mistake a
+        # login screen for command output.
+        for line in tail[-args.lines:] if args.lines else tail:
+            print(line, file=sys.stderr)
+        print("# awaiting authentication — nothing above is session output. Run wait-prompt "
+              "and let the user enter the credential; only then does this terminal become "
+              "a session.", file=sys.stderr)
+        return 3
     for line in tail[-args.lines:] if args.lines else tail:
         print(line)
     print(f"# cursor={cursor}", file=sys.stderr)
@@ -213,11 +271,14 @@ def cmd_wait_prompt(cli: str, args) -> int:
     cursor = args.cursor
     while time.time() < deadline:
         tail, cursor = read_terminal(cli, args.terminal, cursor)
-        if tail and any(pattern.search(line) for line in tail):
+        # A credential prompt is never a shell prompt, whatever the regex matches.
+        if any(pattern.search(line) and not _is_auth_prompt(line) for line in tail):
+            _set_state(args.terminal, "ready")
             print(f"matched; cursor={cursor}")
             return 0
         time.sleep(args.interval)
-    print(f"timeout after {args.timeout}s waiting for /{args.pattern}/", file=sys.stderr)
+    print(f"timeout after {args.timeout}s waiting for /{args.pattern}/ — the terminal is "
+          f"still '{_state(args.terminal)}' and nothing may be sent to it", file=sys.stderr)
     return 1
 
 

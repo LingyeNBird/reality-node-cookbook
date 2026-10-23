@@ -11,6 +11,44 @@ Scripts referenced below live in `scripts/`, templates in `templates/`. Read `RE
 
 **What you are producing:** a remote VPS running sing-box VLESS+Reality on TCP/443, an importable Clash/mihomo profile, and the evidence that both work — camouflage probe, real-client egress, restart survival.
 
+## Rules
+
+These are not advice. Each one exists because ignoring it broke something.
+
+1. **MUST ask before acting.** Collect the six inputs in §0 first. MUST NOT infer the target from the machine.
+2. **MUST NOT enumerate to discover the target.** No `~/.ssh` (any file), `known_hosts`, shell history, cloud CLI inventories, `*config*` directories; MUST NOT probe hosts discovered that way.
+3. **MUST have a shell before running anything.** A created terminal is not a session. MUST NOT treat the terminal buffer as command output.
+4. **After `create`, the only permitted next action is `wait-prompt`.** MUST NOT `send`, `send-script` or `run-script` until `:~#` has actually been observed. Tooling enforces this: a handle in `awaiting-auth` rejects sends.
+5. **Credentials are the user's.** MUST NOT type a passphrase or password, MUST NOT assume it was entered, MUST NOT continue while the screen still shows an auth prompt.
+6. **MUST only touch terminals this tool created.** MUST NOT read or write any other handle, including the agent's own terminal, and MUST NOT call `orca terminal read`/`send` directly to get around the fence.
+7. **Scripts run on the server, inside that session.** MUST land a script before invoking it. MUST NOT use `run-script` for a script that takes subcommands — it has no argument slot.
+8. **Stage order is fixed.** MUST NOT start stage N+1 before stage N's gate passes. Local work (SNI screening) is a stage too, and MUST NOT be run as a substitute for finishing §1–§2.
+9. **The port and the cover site are the user's decisions.** MUST stop and ask. MUST NOT pick a default, MUST NOT "just choose a random high port".
+10. **MUST NOT converge a port before a fresh login from outside succeeds on the new port.** A listening socket is not proof.
+11. **MUST NOT disable password auth before a key login succeeds on the current port.**
+12. **MUST validate before every restart.** `sshd -t` / `sing-box check` MUST pass; on failure, stop and leave the service untouched.
+13. **MUST NOT print the private key.** Echo only public values (public key, uuid, short id).
+14. **MUST verify before claiming done.** All three proofs in §7. If one was skipped, say which and why — MUST NOT imply coverage that was not exercised.
+15. **MUST NOT touch anything outside the stated scope.** No firewall, DNS, or unrelated services; MUST NOT leave throwaway files or test artifacts behind.
+16. **MUST hand over the inventory and the rollback.** Paths, permissions, unit, account, and the exact commands to undo.
+
+## Stage gates
+
+You may not enter a stage until the previous gate has passed. Each gate is evidence, not intent.
+
+| Stage | Entering requires | Gate — all must pass before the next stage |
+|---|---|---|
+| 0 inputs | — | the six answers, from the user |
+| 1 session | address, current SSH port, credential mode | `:~#` observed on a handle this tool created |
+| 2 hardening (only if needed) | an authenticated session | key login works on the current port; **then** on the new port; password refused while the key still works |
+| 3 recon | session | inventory read, 443 free, egress OK, pre-existing daemons catalogued and left alone |
+| 4 port + cover site | recon | port chosen by the user; every candidate verified **on the node**; one chosen by the user |
+| 5 install | chosen cover site reachable from the node | version and tarball hash printed, binary runs |
+| 6 config + unit | install | `sing-box check` OK, unit active, listener on the chosen port |
+| 7 verify | service running | camouflage proof, end-to-end proof, restart survival |
+| 8 profile | verify | YAML parses, node fields equal the generated values, no template leftovers |
+| 9 handover | profile | inventory + rollback delivered, unverified items named |
+
 ## 0. Ask for the inputs first
 
 The first action is a question, not an exploration. Every later step is wrong if the target is wrong, and a wrong target costs someone a server.
