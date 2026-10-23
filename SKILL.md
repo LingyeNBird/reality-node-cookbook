@@ -68,7 +68,8 @@ Every `[SERVER]` block opens with an `ORCA=yes` guard and does nothing when the 
 
 27. **MUST NOT trust local network facts.** Local DNS may be fake-ip and local reachability says nothing about the node: screening happens locally, acceptance happens on the node.
 28. **Done means the criteria in §7, and nothing more.** `sing-box check` clean, unit active and listening, the probe returning the cover site's real certificate, a profile that parses and asserts clean. MUST name anything that did not run rather than implying coverage.
-29. **MUST change only the node block** of the user's client template, assert the result afterwards, and remember the proxy name appears twice.
+29. **The user's profile is the only base, and only the node block may change.** MUST start from the file they supplied — never from `templates/mihomo-proxy-block.yaml`, which is a shape reference, not a profile. Their `mixed-port`, `tun`, `dns`, `proxy-groups`, `rules` and every comment MUST survive byte-for-byte, so the edit MUST be textual (`scripts/profile_patch.py`); a YAML round-trip is forbidden because it drops comments and rewrites formatting.
+   - MUST assert afterwards: the node fields hold the generated values, no value from the previous node survives, and every group membership resolves — a rename that leaves a dangling reference is a broken profile.
 30. **The client-side test belongs to the user.** MUST NOT operate their client, and MUST NOT download or execute a client binary on their machine to produce an end-to-end result. One server would mean one download and ten would mean ten, on their disk, for an answer only their own client can settle.
 31. **MUST distinguish observed from inferred,** and MUST NOT present a hypothesis as a result.
 
@@ -370,7 +371,23 @@ Declare done when all of these hold:
 
 ## 8. Client profile
 
-Copy the user's own template and change **only** the node block: `server`, `port`, `uuid`, `servername`, `reality-opts`. Keep their DNS, TUN, groups and rules byte-identical — they chose those. **File on the client:** this entry inside their profile — it is a credential, keep it outside any repository.
+**The user's own file is the only starting point.** Everything in it except the node block — `mixed-port`, `tun`, `dns`, `proxy-groups`, `rules`, and every comment — is deliberate configuration that somebody chose. MUST NOT author those sections, MUST NOT regenerate the file from scratch, and MUST NOT rewrite it through a YAML parser: that silently drops comments and reflows indentation.
+
+`templates/mihomo-proxy-block.yaml` is a **shape reference for the node entry only**. It is not a profile — no groups, no rules — and MUST NOT be used as the base.
+
+```bash
+# [LOCAL] patch the user's file; everything outside the node entry is proven byte-identical
+python scripts/profile_patch.py --template "<the file the user gave you>" \
+    --out "<LOCAL_ARTIFACT_DIR>/<name>.yaml" \
+    --server <SERVER_IP> --uuid <UUID> --sni <SNI> --pbk <PUBLIC_KEY> --sid <SHORT_ID> \
+    [--name <NODE_NAME>] [--proxy-index 0]
+```
+
+It prints four assertions — text before the entry, text after the entry, untouched keys inside the entry, group references updated — and exits non-zero if any of them fails. **Read them**; a failure means the patch is not safe to hand over.
+
+`--name` renames the node *and* rewrites every policy group that lists it. Omit it to keep the template's own name, which touches the fewest lines and is the safer default.
+
+The node entry the script writes:
 
 ```yaml
 proxies:
@@ -390,7 +407,7 @@ proxies:
       short-id: <SHORT_ID>
 ```
 
-Even when the user says they will import and test it themselves: parse the YAML, assert the node fields equal the generated values, and assert the template's previous node values are **all gone** (old IP, old uuid, old SNI, placeholder `xxx`). A half-replaced template is the most common defect. Remember the proxy name appears twice — in `proxies` and in every group's member list.
+Even when the user will import and test it themselves, the assertions are not optional: a half-replaced template is the most common defect and it looks exactly like a working file.
 
 ## 9. Failure modes
 

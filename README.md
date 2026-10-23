@@ -15,6 +15,7 @@ SKILL.md                              the procedure, with the pitfalls
 README.md                             this file: ordered commands
 scripts/orca_tty.py                   drive an Orca terminal; only handles it created itself
 scripts/ssh_keygen.py                 generate the key + a passphrase file (strength enforced)
+scripts/profile_patch.py              patch ONLY the node entry of the user's own profile
 scripts/ssh_harden.sh                 staged SSH hardening: key install, port move, password off
 scripts/sni_check_on_host.sh          screen AND prove reachability from the node — the decision
 scripts/sni_screen.py                 optional local pre-filter (DoH + ASN + TLS probe); decides nothing
@@ -188,20 +189,20 @@ one download per server is a cost with no payoff: only their own client settles 
 
 ### 4. Hand over the client profile
 
-Start from the user's own profile, replace only the node block
-(`templates/mihomo-proxy-block.yaml`), then assert the result:
+Start from the file the user gave you: its DNS, TUN, groups, rules and comments are theirs,
+and only the node entry may change. Patch it textually — a YAML round-trip would drop the
+comments:
 
 ```bash
-# [LOCAL] your machine
-python - <<'PY'
-import yaml, sys
-cfg = yaml.safe_load(open("<PROFILE_PATH>", encoding="utf-8"))
-px = cfg["proxies"][0]
-print(px)
-# assert: server/port/uuid/servername/reality-opts equal the generated values,
-# and none of the template's previous node values survive.
-PY
+# [LOCAL] your machine — everything outside the node entry is proven byte-identical
+python scripts/profile_patch.py --template "<the user's file>" \
+    --out "<LOCAL_ARTIFACT_DIR>/<name>.yaml" \
+    --server <SERVER_IP> --uuid <UUID> --sni <SNI> --pbk <PUBLIC_KEY> --sid <SHORT_ID>
 ```
+
+It prints four assertions and exits non-zero if any fails: text before the entry, text
+after the entry, untouched keys inside the entry, group references updated.
+`templates/mihomo-proxy-block.yaml` is a shape reference only — never the base.
 
 ## When it breaks
 
