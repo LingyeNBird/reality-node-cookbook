@@ -39,6 +39,10 @@ Two traps it encodes, both of which make a naive fix silently do nothing:
 
 Never converge the port before a fresh login on the new port has succeeded from outside. An existing session is not proof, and neither is a listening socket.
 
+**Stop at the port step and ask the user which port to use.** It is their decision: the value ends up in their client config, their provider's firewall rules and their notes. Do not invent one and do not "just pick a random high port". Say what makes a good choice (anything from 1024 up; avoid the host's ephemeral range, which is `cat /proc/sys/net/ipv4/ip_local_port_range`; avoid the well-known alternate ports that scanners try first), then wait for an answer before running `stage-port`.
+
+`stage-port` and `converge-port` both refuse a port that is already bound — checked twice, with `ss` and an actual bind attempt — and `converge-port` snapshots the old configuration, verifies the new port really listens, and rolls back if it does not. Converging is the one step that removes the old port, so a failed bind there would otherwise leave no listener at all.
+
 ## 2. Driving the session through Orca
 
 Use `scripts/orca_tty.py` rather than raw `orca` calls; it encodes the pitfalls.

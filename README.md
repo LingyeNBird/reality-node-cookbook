@@ -73,6 +73,16 @@ outside on the new port is the only acceptable proof. `SKILL.md` §1 explains th
 precedence traps this handles: drop-ins cannot override the main file above `Include`, and
 a socket-activated sshd ignores `Port` entirely (`ListenStream` on `ssh.socket` owns it).
 
+**Ask the user which port to use before running `stage-port`.** It is not the assistant's
+call: the value has to go into their client config and their provider's firewall. Describe
+what makes a good pick (above 1024, outside the host's ephemeral range from
+`cat /proc/sys/net/ipv4/ip_local_port_range`, not one of the well-known alternate ports
+scanners hit first) and wait.
+
+Both port commands refuse a port that is already bound — checked with `ss` and a real bind
+attempt — and `converge-port` snapshots the previous configuration, verifies the new port
+is actually listening, and rolls back when it is not.
+
 ### 1. Pick the SNI target
 
 ```bash

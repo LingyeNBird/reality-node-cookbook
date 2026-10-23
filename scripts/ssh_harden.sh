@@ -205,25 +205,97 @@ cmd_install_key() {
   warn "  ssh -o PreferredAuthentications=publickey -o IdentitiesOnly=yes -p <current-port> -i <key> root@<host>"
 }
 
+# ------------------------------------------------------------------ port safety
+
+listener_on() {
+  local p="$1"
+  # preferred: server-side filter
+  if command -v ss >/dev/null 2>&1; then
+    if ss -lntH "sport = :$p" 2>/dev/null | grep -q .; then return 0; fi
+    # fallback: parse every listener, in case this ss build lacks the filter
+    if ss -lntH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$"; then return 0; fi
+  fi
+  return 1
+}
+
+# True when the port cannot be bound: something is listening, or a bind attempt fails.
+# sshd is TCP, so a UDP listener on the same number does not count.
+port_taken() {
+  local p="$1"
+  if listener_on "$p"; then
+    note "port $p: a TCP listener already exists"
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    if ! python3 - "$p" <<'PY' >/dev/null 2>&1
+import socket, sys
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(("0.0.0.0", int(sys.argv[1])))
+except OSError:
+    sys.exit(1)
+finally:
+    s.close()
+PY
+    then
+      note "port $p: bind attempt failed"
+      return 0
+    fi
+    note "port $p: no listener, and a bind attempt succeeded"
+    return 1
+  fi
+  # Never claim a port is free when the stronger check could not run.
+  warn "python3 is missing: port $p was only checked for listeners, not actually bound"
+  return 1
+}
+
+check_port_arg() {
+  case "$1" in ''|*[!0-9]*) die "port must be numeric, got: $1" ;; esac
+  { [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; } || die "port out of range: $1"
+  [ "$1" -lt 1024 ] && warn "port $1 is privileged; sshd can bind it but there is no benefit"
+  local range lo hi
+  range=$(cat /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || true)
+  lo=$(printf '%s' "$range" | awk '{print $1}')
+  hi=$(printf '%s' "$range" | awk '{print $2}')
+  if [ -n "${lo:-}" ] && [ -n "${hi:-}" ] && [ "$1" -ge "$lo" ] && [ "$1" -le "$hi" ]; then
+    warn "port $1 sits inside the ephemeral range $lo-$hi; prefer below $lo or above $hi"
+  fi
+}
+
+refuse_if_taken() {
+  if port_taken "$1"; then
+    die "port $1 is already in use — refusing to change anything"
+  fi
+  note "port $1 appears free"
+}
+
+write_socket_dropin() {
+  install -d -m 0755 "$(dirname "$SOCKET_DROPIN")"
+  {
+    echo '[Socket]'
+    echo 'ListenStream='
+    local p
+    for p in "$@"; do
+      echo "ListenStream=0.0.0.0:$p"
+      echo "ListenStream=[::]:$p"
+    done
+  } > "$SOCKET_DROPIN"
+}
+
 cmd_stage_port() {
   local new="${1:-}"
-  [ -n "$new" ] || die "usage: $0 stage-port <new-port>"
-  local old p
+  [ -n "$new" ] || die "usage: $0 stage-port <new-port>   (the port must come from the user)"
+  check_port_arg "$new"
+  local old
   old=$(current_ports)
   [ -n "$old" ] || die "cannot determine the current ssh port"
   [ "$old" = "$new" ] && die "$new is already the listening port"
+  refuse_if_taken "$new"
 
   say "staging port $new alongside $old"
   if socket_activated; then
-    install -d -m 0755 "$(dirname "$SOCKET_DROPIN")"
-    {
-      echo '[Socket]'
-      echo 'ListenStream='
-      for p in $old $new; do
-        echo "ListenStream=0.0.0.0:$p"
-        echo "ListenStream=[::]:$p"
-      done
-    } > "$SOCKET_DROPIN"
+    write_socket_dropin $old "$new"
     note "wrote $SOCKET_DROPIN"
     systemctl daemon-reload
     say "merged listen list — review before it is applied"
@@ -237,7 +309,10 @@ cmd_stage_port() {
     reload_ssh
   fi
 
-  sleep 1
+  sleep 2
+  if ! listener_on "$new"; then
+    warn "staging did not come up on $new — the old port $old is still listening"
+  fi
   say "listeners now"
   ss -lntp 2>/dev/null | grep -iE 'ssh' | sed 's/^/    /' || true
   echo
@@ -248,37 +323,69 @@ cmd_stage_port() {
 
 cmd_converge_port() {
   local new="${1:-}"
-  [ -n "$new" ] || die "usage: $0 converge-port <new-port>"
-  say "converging to port $new only"
+  [ -n "$new" ] || die "usage: $0 converge-port <new-port>   (the port must come from the user)"
+  check_port_arg "$new"
+  local old
+  old=$(current_ports)
+  [ -n "$old" ] || die "cannot determine the current ssh port"
+  refuse_if_taken "$new"
 
+  # Snapshot everything this command touches. Converging drops the old port, so a bind
+  # that fails afterwards would leave no listener at all — the snapshot is the way back.
+  local snap
+  snap=$(mktemp -d)
+  [ -f "$SSHD_MAIN" ] && cp -a "$SSHD_MAIN" "$snap/sshd_config"
+  [ -f "$SOCKET_DROPIN" ] && cp -a "$SOCKET_DROPIN" "$snap/socket.conf"
+  [ -f "${DROPIN_DIR}/10-extra-port.conf" ] && cp -a "${DROPIN_DIR}/10-extra-port.conf" "$snap/extra.conf"
+  [ -f "${DROPIN_DIR}/10-port.conf" ] && cp -a "${DROPIN_DIR}/10-port.conf" "$snap/port.conf"
+  note "snapshot: $snap"
+
+  say "converging to port $new only (currently: $old)"
   if socket_activated; then
-    {
-      echo '[Socket]'
-      echo 'ListenStream='
-      echo "ListenStream=0.0.0.0:$new"
-      echo "ListenStream=[::]:$new"
-    } > "$SOCKET_DROPIN"
+    write_socket_dropin "$new"
     systemctl daemon-reload
     systemctl show ssh.socket -p Listen | sed 's/^/    /'
-    systemctl restart ssh.socket
-    systemctl restart ssh.service
+    systemctl restart ssh.socket || warn "ssh.socket restart reported a failure"
+    systemctl restart ssh.service || warn "ssh.service restart reported a failure"
   else
     rm -f "${DROPIN_DIR}/10-extra-port.conf"
     backup_sshd
     local tmp
     tmp=$(mktemp)
-    # drop every live Port line, then declare exactly one via a drop-in
     awk 'tolower($1)=="port" && $0 !~ /^[[:space:]]*#/ {next} {print}' "$SSHD_MAIN" > "$tmp"
     cat "$tmp" > "$SSHD_MAIN"; rm -f "$tmp"
     printf 'Port %s\n' "$new" > "${DROPIN_DIR}/10-port.conf"
     note "removed live Port lines from ${SSHD_MAIN}; wrote ${DROPIN_DIR}/10-port.conf"
-    reload_ssh
+    reload_ssh || warn "reload reported a failure"
   fi
 
-  sleep 1
-  say "listeners now"
+  sleep 2
+  if listener_on "$new"; then
+    say "listening on $new"
+    ss -lntp 2>/dev/null | grep -iE 'ssh' | sed 's/^/    /' || true
+    rm -rf "$snap"
+    warn "re-prove login from outside on $new; the old port should now be closed"
+    return 0
+  fi
+
+  # ---------------------------------------------------------------- rollback
+  warn "port $new is NOT listening — restoring the previous configuration"
+  systemctl status ssh.socket --no-pager -l 2>/dev/null | head -6 | sed 's/^/    /' || true
+  journalctl -u ssh.socket -n 8 --no-pager 2>/dev/null | sed 's/^/    /' || true
+
+  if [ -f "$snap/sshd_config" ]; then cat "$snap/sshd_config" > "$SSHD_MAIN"; fi
+  if [ -f "$snap/socket.conf" ]; then cp -a "$snap/socket.conf" "$SOCKET_DROPIN"; else rm -f "$SOCKET_DROPIN"; fi
+  if [ -f "$snap/port.conf" ]; then cp -a "$snap/port.conf" "${DROPIN_DIR}/10-port.conf"; else rm -f "${DROPIN_DIR}/10-port.conf"; fi
+  if [ -f "$snap/extra.conf" ]; then cp -a "$snap/extra.conf" "${DROPIN_DIR}/10-extra-port.conf"; fi
+
+  systemctl daemon-reload || true
+  systemctl restart ssh.socket 2>/dev/null || true
+  systemctl restart ssh.service 2>/dev/null || true
+  sleep 2
+  say "listeners after rollback (the old port should be back)"
   ss -lntp 2>/dev/null | grep -iE 'ssh' | sed 's/^/    /' || true
-  warn "re-prove login from outside on $new; the old port should be closed"
+  rm -rf "$snap"
+  die "converge failed and was rolled back — verify you can still log in on the old port"
 }
 
 cmd_disable_password() {
@@ -312,6 +419,11 @@ Run ON the server from an already-authenticated session.
 
 Order matters: prove a login from OUTSIDE on the new port between stage-port and
 converge-port. A listening socket is not proof; a fresh login is.
+
+The port is the user's decision: stop and ask which port to use. Never choose one on
+their behalf — it ends up in their client config, firewall rules and notes. This script
+refuses a port that is already bound, and converge-port rolls back automatically if the
+new port does not come up.
 EOF
 }
 
