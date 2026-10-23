@@ -32,6 +32,7 @@ templates/mihomo-proxy-block.yaml     client proxy block
 | `<NEW_SSH_PORT>` | SSH port to move to (Stage 0 only) |
 | `<PUBKEY_FILE>` | local path to the `.pub` file being installed |
 | `<LOCAL_KEY_PATH>` | local path to the encrypted private key |
+| `<LOCAL_ARTIFACT_DIR>` | agreed directory **outside any repo** holding the key and the profile |
 | `<SNI>` | the cover domain (`server_name` and handshake target) |
 | `<NODE_NAME>` | display name in the client profile |
 | `<UUID>` / `<PUBLIC_KEY>` / `<SHORT_ID>` | client credentials, printed by `node_setup.sh` |
@@ -49,6 +50,7 @@ before running a single command — one round trip is cheaper than a wrong host 
 | how to authenticate | key path with a passphrase the user types, or still password-only |
 | whether SSH must be hardened, and **which new port** | their decision; it lands in their client config and firewall |
 | cover-site constraints | region, things to avoid, or "you pick" |
+| where local artifacts go | the key and the profile are credentials; they must not land in a repository |
 | client and delivery | which client, and local file or hosted subscription |
 
 **Forbidden — do not discover the target by enumeration.** Never read `~/.ssh/`

@@ -1,3 +1,19 @@
+# Build artifacts
 __pycache__/
 *.pyc
 .venv/
+
+# Defence in depth: this repo is public and must never absorb a key or a client profile.
+# The rule is "put them outside the repo" — these patterns only catch the mistake.
+id_*
+*.pem
+*.key
+*.pub
+*.passphrase
+*.passphrase.txt
+passphrase.txt
+*reality*.yaml
+*reality*.yml
+clash*.yaml
+clash*.yml
+candidates.txt

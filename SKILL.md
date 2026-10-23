@@ -15,22 +15,80 @@ Scripts referenced below live in `scripts/`, templates in `templates/`. Read `RE
 
 These are not advice. Each one exists because ignoring it broke something.
 
+### Scope and consent
+
 1. **MUST ask before acting.** Collect the six inputs in §0 first. MUST NOT infer the target from the machine.
-2. **MUST NOT enumerate to discover the target.** No `~/.ssh` (any file), `known_hosts`, shell history, cloud CLI inventories, `*config*` directories; MUST NOT probe hosts discovered that way.
-3. **MUST have a shell before running anything.** A created terminal is not a session. MUST NOT treat the terminal buffer as command output.
-4. **After `create`, the only permitted next action is `wait-prompt`.** MUST NOT `send`, `send-script` or `run-script` until `:~#` has actually been observed. Tooling enforces this: a handle in `awaiting-auth` rejects sends.
-5. **Credentials are the user's.** MUST NOT type a passphrase or password, MUST NOT assume it was entered, MUST NOT continue while the screen still shows an auth prompt.
-6. **MUST only touch terminals this tool created.** MUST NOT read or write any other handle, including the agent's own terminal, and MUST NOT call `orca terminal read`/`send` directly to get around the fence.
-7. **Scripts run on the server, inside that session.** MUST land a script before invoking it. MUST NOT use `run-script` for a script that takes subcommands — it has no argument slot.
-8. **Stage order is fixed.** MUST NOT start stage N+1 before stage N's gate passes. Local work (SNI screening) is a stage too, and MUST NOT be run as a substitute for finishing §1–§2.
-9. **The port and the cover site are the user's decisions.** MUST stop and ask. MUST NOT pick a default, MUST NOT "just choose a random high port".
-10. **MUST NOT converge a port before a fresh login from outside succeeds on the new port.** A listening socket is not proof.
-11. **MUST NOT disable password auth before a key login succeeds on the current port.**
-12. **MUST validate before every restart.** `sshd -t` / `sing-box check` MUST pass; on failure, stop and leave the service untouched.
-13. **MUST NOT print the private key.** Echo only public values (public key, uuid, short id).
-14. **MUST verify before claiming done.** All three proofs in §7. If one was skipped, say which and why — MUST NOT imply coverage that was not exercised.
-15. **MUST NOT touch anything outside the stated scope.** No firewall, DNS, or unrelated services; MUST NOT leave throwaway files or test artifacts behind.
-16. **MUST hand over the inventory and the rollback.** Paths, permissions, unit, account, and the exact commands to undo.
+2. **MUST NOT enumerate to discover anything.** No `~/.ssh` (any file), `known_hosts`, shell history, cloud CLI inventories, `*config*` directories, project `.env`. The same ban covers discovering the cover site and the client profile. MUST NOT probe hosts discovered that way.
+3. **MUST agree where local artifacts go.** Before creating a key, a passphrase file or a profile, agree on a directory **outside every repository** (see *Local artifacts*). MUST NOT default to the CWD, `$TEMP`, or the repo.
+4. **MUST stay in scope.** No firewall changes, no DNS changes, no edits to unrelated services or repositories, no "improvements" the task did not ask for.
+
+### Session and terminal
+
+5. **MUST have a shell before running anything.** A created terminal is not a session, and its buffer is not output.
+6. **After `create`, the only permitted next action is `wait-prompt`.** MUST NOT send, land a script or run anything until `:~#` has been observed. Tooling enforces this: a handle in `awaiting-auth` rejects writes.
+7. **Credentials are the user's.** MUST NOT type or store a passphrase or password, MUST NOT assume it was entered, MUST NOT act while the screen still shows an auth prompt.
+8. **MUST only touch terminals this tool created.** MUST NOT read or write any other handle — including the agent's own terminal — and MUST NOT bypass the fence with a direct `orca terminal read|send`.
+9. **MUST land a script before invoking it,** and MUST NOT use `run-script` for a script that takes subcommands: it has no argument slot.
+10. **MUST use bounded waits.** No `wait --for tui-idle`; every poll carries a timeout, and a timeout is a stop, not a retry loop.
+11. **MUST say so when a privileged session is still open,** and close the ones that are finished.
+
+### Order and gates
+
+12. **Stage order is fixed.** MUST NOT enter stage N+1 before stage N's gate passes. Local work is a stage too.
+13. **The port and the cover site are the user's decisions.** MUST stop and ask. MUST NOT pick a default, and MUST NOT "just choose a random high port".
+14. **MUST NOT converge a port before a fresh login from outside succeeds on the new port.** A listening socket is not proof.
+15. **MUST NOT disable password auth before a key login succeeds on the current port.**
+16. **A failed gate is a stop.** MUST report it and wait; MUST NOT continue with a workaround that has not been agreed.
+
+### Secrets and files
+
+17. **MUST NOT print or transcribe the private key or the passphrase.** Echo public values only: public key, fingerprint, uuid, short id.
+18. **MUST NOT persist the passphrase.** If the user explicitly asks for a file, write it `0600` in the agreed directory, label it temporary, and delete it once the user confirms it is in their password manager.
+19. **MUST generate the key only in the agreed place** — ed25519 with `-a 100` — and MUST NOT overwrite an existing key. Report the public key and its fingerprint.
+20. **MUST restrict local permissions.** POSIX `0600` for files, `0700` for the directory; on Windows `icacls` down to owner and SYSTEM, inheritance removed.
+21. **The client profile is a credential.** MUST deliver it by path. MUST NOT paste it into chat, MUST NOT commit it, MUST NOT write it inside a repository.
+22. **MUST keep this package placeholder-only.** MUST NOT bake any deployment's address, port, domain, key, path or fingerprint into it.
+
+### Change safety
+
+23. **MUST back up before every mutation** — `sshd_config`, the sing-box config, the unit — and keep the backup until the new state is verified.
+24. **MUST be idempotent.** Re-running MUST NOT rotate secrets; swapping the cover site MUST keep uuid, private key and short id.
+25. **MUST leave pre-existing services untouched.** Distinct unit name, distinct port, no edits to anything this run did not create.
+26. **MUST validate before every restart** (`sshd -t`, `sing-box check`). On failure: stop, leave the service running as it was.
+
+### Verification and honesty
+
+27. **MUST NOT trust local network facts.** Local DNS may be fake-ip and local reachability says nothing about the node: screening happens locally, acceptance happens on the node.
+28. **MUST verify before claiming done** — the three proofs in §7 — and MUST name which checks ran and which did not. MUST NOT imply coverage that was not exercised.
+29. **MUST change only the node block** of the user's client template, assert the result afterwards, and remember the proxy name appears twice.
+30. **MUST NOT operate the user's client for them** when they said they would import it themselves.
+31. **MUST distinguish observed from inferred,** and MUST NOT present a hypothesis as a result.
+
+### Handover
+
+32. **MUST hand over inventory and rollback** — paths, permissions, unit, service account, hashes, and the exact undo commands — and MUST say whether the rollback path was exercised.
+33. **MUST delete throwaway artifacts** (downloads, scratch scripts, test terminals) and state what was left behind.
+
+## Local artifacts
+
+Everything this flow produces on the **client** machine is a key or a credential. It lives in one agreed directory outside every repository — never in the working tree, never in `$TEMP`.
+
+```
+<LOCAL_ARTIFACT_DIR>/          # agreed with the user, 0700
+├── id_ed25519                # private key, 0600
+├── id_ed25519.pub
+├── <profile>.yaml            # client profile: carries the node uuid / public key / short id
+└── passphrase.txt            # ONLY if the user asked for it: temporary, 0600, delete after
+```
+
+| Platform | Locking it down |
+|---|---|
+| POSIX | `mkdir -m 0700 <DIR> && chmod 600 <DIR>/*` |
+| Windows | `icacls "<DIR>" /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F" "SYSTEM:(OI)(CI)F"` |
+
+The private key must also satisfy the SSH client's own permission check, or `ssh` refuses to use it (`UNPROTECTED PRIVATE KEY FILE` on Windows). Prove it with a real login rather than assuming.
+
+If the user names a path **inside** a repository, say so and propose another one: the profile carries the node credentials and repositories get pushed. A defensive `.gitignore` entry is not a substitute for keeping them out.
 
 ## Stage gates
 
