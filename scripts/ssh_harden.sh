@@ -294,6 +294,23 @@ refuse_if_taken() {
   note "port $1 appears free"
 }
 
+# The listener converge-port expects to find is the one stage-port just created: sshd
+# itself. Treating that as a foreign conflict makes the documented stage -> converge
+# sequence impossible, so only a port held by anything else is a refusal.
+refuse_if_foreign() {
+  local p="$1" owners
+  if ! port_taken "$p"; then
+    note "port $p appears free"
+    return 0
+  fi
+  owners=$(ss -lntHp "sport = :$p" 2>/dev/null || true)
+  if printf '%s' "$owners" | grep -q 'users:((.*"sshd"'; then
+    note "port $p is held by this host's sshd (the staged listener) — proceeding"
+    return 0
+  fi
+  die "port $p is held by another service — refusing to change anything"
+}
+
 write_socket_dropin() {
   install -d -m 0755 "$(dirname "$SOCKET_DROPIN")"
   {
@@ -352,7 +369,7 @@ cmd_converge_port() {
   local old
   old=$(current_ports)
   [ -n "$old" ] || die "cannot determine the current ssh port"
-  refuse_if_taken "$new"
+  refuse_if_foreign "$new"
 
   # Snapshot everything this command touches. Converging drops the old port, so a bind
   # that fails afterwards would leave no listener at all — the snapshot is the way back.

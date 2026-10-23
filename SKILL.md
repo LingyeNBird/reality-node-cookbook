@@ -9,7 +9,7 @@ Portable procedure. Every host, port, domain, key, and path appears as a placeho
 
 Scripts referenced below live in `scripts/`, templates in `templates/`. Read `README.md` for the ordered command sequence.
 
-**What you are producing:** a remote VPS running sing-box VLESS+Reality on TCP/443, an importable Clash/mihomo profile, and the evidence that both work — camouflage probe, real-client egress, restart survival.
+**What you are producing:** a remote VPS running sing-box VLESS+Reality on TCP/443, and an importable Clash/mihomo profile. The evidence is the node's own state plus one cheap probe — never a reproduction of the user's client test.
 
 ## Rules
 
@@ -67,9 +67,9 @@ Every `[SERVER]` block opens with an `ORCA=yes` guard and does nothing when the 
 ### Verification and honesty
 
 27. **MUST NOT trust local network facts.** Local DNS may be fake-ip and local reachability says nothing about the node: screening happens locally, acceptance happens on the node.
-28. **MUST verify before claiming done** — the three proofs in §7 — and MUST name which checks ran and which did not. MUST NOT imply coverage that was not exercised.
+28. **Done means the criteria in §7, and nothing more.** `sing-box check` clean, unit active and listening, the probe returning the cover site's real certificate, a profile that parses and asserts clean. MUST name anything that did not run rather than implying coverage.
 29. **MUST change only the node block** of the user's client template, assert the result afterwards, and remember the proxy name appears twice.
-30. **MUST NOT operate the user's client for them** when they said they would import it themselves.
+30. **The client-side test belongs to the user.** MUST NOT operate their client, and MUST NOT download or execute a client binary on their machine to produce an end-to-end result. One server would mean one download and ten would mean ten, on their disk, for an answer only their own client can settle.
 31. **MUST distinguish observed from inferred,** and MUST NOT present a hypothesis as a result.
 
 ### Handover
@@ -113,7 +113,7 @@ You may not enter a stage until the previous gate has passed. Each gate is evide
 | 4 port + cover site | recon | port chosen by the user; every candidate verified **on the node**; one chosen by the user |
 | 5 install | chosen cover site reachable from the node | version and tarball hash printed, binary runs |
 | 6 config + unit | install | `sing-box check` OK, unit active, listener on the chosen port |
-| 7 verify | service running | camouflage proof, end-to-end proof, restart survival |
+| 7 verify | service running | `sing-box check` clean, unit active and listening, probe returns the cover site's certificate |
 | 8 profile | verify | YAML parses, node fields equal the generated values, no template leftovers |
 | 9 handover | profile | inventory + rollback delivered, unverified items named |
 
@@ -343,22 +343,30 @@ The 1.14.x config shape (field names have moved across releases — always let `
  "outbounds":[{"type":"direct"}]}
 ```
 
-## 7. Verify — three independent proofs
+## 7. Completion criteria
+
+Done means the node is in the intended state and the profile is ready. It does **not** mean "I reproduced the user's test": that test belongs to their client, and reproducing it costs a downloaded binary per server.
 
 ```bash
-# [LOCAL] both probes run from your machine, outside the node
+# [LOCAL] one cheap check — no binary, no credentials: does the node still relay the cover site?
 python scripts/node_verify.py --host <SERVER_IP> --port 443 --sni <SNI> --repeat 3
-python scripts/client_e2e.py --sing-box <path-to-sing-box> \
-    --server <SERVER_IP> --port 443 --uuid <UUID> --sni <SNI> --pbk <PUBLIC_KEY> --sid <SHORT_ID>
-# [SERVER] restart proof — then repeat the [LOCAL] camouflage probe above
+```
+
+```bash
+# [SERVER] restart, then repeat the probe above
 [ "${ORCA:-}" = yes ] && systemctl restart <unit>
 ```
 
-1. **Camouflage / relay** — a plain TLS client presenting the configured SNI must receive the **real certificate of that site**, because unauthenticated handshakes are relayed to the target. This is also the cheapest health check.
-2. **Real end-to-end** — a genuine client must egress as the node's IP via both HTTP and SOCKS5, and differently from a direct control.
-3. **Restart survival** — a node that only works until the first restart is not done.
+Declare done when all of these hold:
 
-`scripts/node_verify.py` distinguishes "server sent zero bytes" (Reality could not reach its target) from "certificate mismatch" (wrong SNI or wrong target), which is the difference between a server fault and a client fault.
+1. `sing-box check` passed, the unit is `active` and `enabled`, and it listens on the chosen port.
+2. The probe returns the **cover site's real certificate** — proof that unauthenticated handshakes are relayed, which is also the proof that the node can reach its target.
+3. The client profile was written, parsed and asserted: node fields equal the generated values, no template leftovers.
+4. The user has the profile path, and knows the passphrase file is temporary.
+
+**MUST NOT download or execute a client binary on the user's machine to prove egress.** Ten servers would mean ten downloads on their disk, for a result only their own client can settle.
+
+`node_verify.py` distinguishes "server sent zero bytes" (Reality could not reach its target) from "certificate mismatch" (wrong SNI or wrong target) — a server fault versus a client fault.
 
 ## 8. Client profile
 

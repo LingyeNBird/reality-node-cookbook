@@ -19,8 +19,7 @@ scripts/ssh_harden.sh                 staged SSH hardening: key install, port mo
 scripts/sni_check_on_host.sh          screen AND prove reachability from the node — the decision
 scripts/sni_screen.py                 optional local pre-filter (DoH + ASN + TLS probe); decides nothing
 scripts/node_setup.sh                 install/configure/restart the node (idempotent, SNI-swappable)
-scripts/node_verify.py                probe the node from outside (camouflage + health)
-scripts/client_e2e.py                 run a real client and compare three egress paths
+scripts/node_verify.py                one cheap probe: does the node still relay the cover site?
 templates/server-config.json          sing-box inbound config skeleton
 templates/singbox-reality.service     hardened systemd unit
 templates/mihomo-proxy-block.yaml     client proxy block
@@ -174,18 +173,18 @@ Swapping the cover site later is the same command with a new `SNI` — secrets a
 [ "${ORCA:-}" = yes ] && SNI=<NEW_SNI> bash /root/node_setup.sh
 ```
 
-### 3. Verify from outside
+### 3. Confirm the node is healthy
 
 ```bash
-# [LOCAL] both probes run from your machine, outside the node
+# [LOCAL] one probe, no binary and no credentials — it should return the cover site's certificate
 python scripts/node_verify.py --host <SERVER_IP> --sni <SNI> --repeat 3
-python scripts/client_e2e.py --sing-box <path-to-sing-box> \
-    --server <SERVER_IP> --uuid <UUID> --sni <SNI> --pbk <PUBLIC_KEY> --sid <SHORT_ID>
 ```
 
-The first must show the cover site's real certificate (that is the camouflage working).
-The second must show the two proxied paths agreeing with each other and differing from
-the direct control.
+Declare done on: `sing-box check` clean, the unit active and listening, this probe showing
+the cover site's real certificate, and a profile that parses and asserts clean.
+
+**Do not download a client binary to reproduce the user's test.** That test is theirs, and
+one download per server is a cost with no payoff: only their own client settles it.
 
 ### 4. Hand over the client profile
 
