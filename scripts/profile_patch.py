@@ -251,6 +251,15 @@ def structural_check(path: Path, args) -> None:
     if args.name and px.get("name") != args.name:
         problems.append(f"name is {px.get('name')!r}")
 
+    for key in ("server", "uuid", "servername"):
+        val = px.get(key)
+        if isinstance(val, str) and val.startswith("<") and val.endswith(">"):
+            problems.append(f"{key} is still the placeholder {val!r}")
+    for key in REALITY_KEYS:
+        val = reality.get(key)
+        if isinstance(val, str) and val.startswith("<") and val.endswith(">"):
+            problems.append(f"reality-opts.{key} is still the placeholder {val!r}")
+
     known = {p.get("name") for p in cfg.get("proxies", []) if isinstance(p, dict)}
     known |= {"DIRECT", "REJECT", "GLOBAL"}
     for group in cfg.get("proxy-groups", []) or []:

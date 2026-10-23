@@ -68,8 +68,8 @@ Every `[SERVER]` block opens with an `ORCA=yes` guard and does nothing when the 
 
 27. **MUST NOT trust local network facts.** Local DNS may be fake-ip and local reachability says nothing about the node: screening happens locally, acceptance happens on the node.
 28. **Done means the criteria in §7, and nothing more.** `sing-box check` clean, unit active and listening, the probe returning the cover site's real certificate, a profile that parses and asserts clean. MUST name anything that did not run rather than implying coverage.
-29. **The user's profile is the only base, and only the node block may change.** MUST start from the file they supplied — never from `templates/mihomo-proxy-block.yaml`, which is a shape reference, not a profile. Their `mixed-port`, `tun`, `dns`, `proxy-groups`, `rules` and every comment MUST survive byte-for-byte, so the edit MUST be textual (`scripts/profile_patch.py`); a YAML round-trip is forbidden because it drops comments and rewrites formatting.
-   - MUST assert afterwards: the node fields hold the generated values, no value from the previous node survives, and every group membership resolves — a rename that leaves a dangling reference is a broken profile.
+29. **`templates/mihomo-profile.yaml` is the base, and only the node entry may change.** It is a complete working profile — `mixed-port`, `profile`, `tun`, `dns` with fake-ip and split nameservers, groups, 13 rules — shipped so that no run has to ask the user for theirs, and it MUST be used as-is. MUST NOT author or regenerate those sections, and MUST NOT round-trip the file through a YAML parser: that drops formatting and rewrites line endings. Patch it textually with `scripts/profile_patch.py`.
+   - MUST assert afterwards: the node fields hold the generated values, **no `<PLACEHOLDER>` survives**, and every group membership resolves. A leftover placeholder or a dangling group reference is a broken profile, not a cosmetic issue.
 30. **The client-side test belongs to the user.** MUST NOT operate their client, and MUST NOT download or execute a client binary on their machine to produce an end-to-end result. One server would mean one download and ten would mean ten, on their disk, for an answer only their own client can settle.
 31. **MUST distinguish observed from inferred,** and MUST NOT present a hypothesis as a result.
 
@@ -371,43 +371,21 @@ Declare done when all of these hold:
 
 ## 8. Client profile
 
-**The user's own file is the only starting point.** Everything in it except the node block — `mixed-port`, `tun`, `dns`, `proxy-groups`, `rules`, and every comment — is deliberate configuration that somebody chose. MUST NOT author those sections, MUST NOT regenerate the file from scratch, and MUST NOT rewrite it through a YAML parser: that silently drops comments and reflows indentation.
-
-`templates/mihomo-proxy-block.yaml` is a **shape reference for the node entry only**. It is not a profile — no groups, no rules — and MUST NOT be used as the base.
+`templates/mihomo-profile.yaml` is a **complete profile**, not a fragment: `mixed-port`, `profile`, `tun`, `dns` (fake-ip, split nameservers), `proxy-groups`, 13 rules. It ships with the package precisely so a run never has to ask the user for their own file, and it is the **only** base. Everything outside the node entry comes through byte-for-byte — indentation, ordering, line endings and comments included.
 
 ```bash
-# [LOCAL] patch the user's file; everything outside the node entry is proven byte-identical
-python scripts/profile_patch.py --template "<the file the user gave you>" \
+# [LOCAL] patch the bundled profile; everything outside the node entry is proven byte-identical
+python scripts/profile_patch.py --template templates/mihomo-profile.yaml \
     --out "<LOCAL_ARTIFACT_DIR>/<name>.yaml" \
     --server <SERVER_IP> --uuid <UUID> --sni <SNI> --pbk <PUBLIC_KEY> --sid <SHORT_ID> \
     [--name <NODE_NAME>] [--proxy-index 0]
 ```
 
-It prints four assertions — text before the entry, text after the entry, untouched keys inside the entry, group references updated — and exits non-zero if any of them fails. **Read them**; a failure means the patch is not safe to hand over.
+It prints its assertions — text before the entry, text after the entry, untouched keys and their order, group references — and exits non-zero if any fails. **Read them**; a failure means the file is not safe to hand over.
 
-`--name` renames the node *and* rewrites every policy group that lists it. Omit it to keep the template's own name, which touches the fewest lines and is the safer default.
+`--name` renames the node *and* rewrites every policy group that lists it. Omit it to keep `NODE`, which touches the fewest lines.
 
-The node entry the script writes:
-
-```yaml
-proxies:
-  - name: "<NODE_NAME>"
-    type: vless
-    server: <SERVER_IP>
-    port: 443
-    uuid: <UUID>
-    network: tcp
-    tls: true
-    udp: true
-    flow: xtls-rprx-vision
-    servername: <SNI>
-    client-fingerprint: chrome
-    reality-opts:
-      public-key: <PUBLIC_KEY>
-      short-id: <SHORT_ID>
-```
-
-Even when the user will import and test it themselves, the assertions are not optional: a half-replaced template is the most common defect and it looks exactly like a working file.
+The output is a credential: it goes to the artifact directory, mode `0600`, outside any repository. Even when the user will import and test it themselves, the assertions are not optional — an unfilled `<PLACEHOLDER>` looks exactly like a working file.
 
 ## 9. Failure modes
 

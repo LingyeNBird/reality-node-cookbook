@@ -23,7 +23,7 @@ scripts/node_setup.sh                 install/configure/restart the node (idempo
 scripts/node_verify.py                one cheap probe: does the node still relay the cover site?
 templates/server-config.json          sing-box inbound config skeleton
 templates/singbox-reality.service     hardened systemd unit
-templates/mihomo-proxy-block.yaml     client proxy block
+templates/mihomo-profile.yaml         complete Clash/mihomo profile — the only base for the client file
 ```
 
 ## Placeholders
@@ -189,20 +189,19 @@ one download per server is a cost with no payoff: only their own client settles 
 
 ### 4. Hand over the client profile
 
-Start from the file the user gave you: its DNS, TUN, groups, rules and comments are theirs,
-and only the node entry may change. Patch it textually — a YAML round-trip would drop the
-comments:
+`templates/mihomo-profile.yaml` ships complete — DNS, TUN, groups and all 13 rules — so
+there is nothing to ask the user for and nothing to assemble. It is the only base; only the
+node entry may change.
 
 ```bash
-# [LOCAL] your machine — everything outside the node entry is proven byte-identical
-python scripts/profile_patch.py --template "<the user's file>" \
+# [LOCAL] patch the bundled profile; everything outside the node entry is proven byte-identical
+python scripts/profile_patch.py --template templates/mihomo-profile.yaml \
     --out "<LOCAL_ARTIFACT_DIR>/<name>.yaml" \
     --server <SERVER_IP> --uuid <UUID> --sni <SNI> --pbk <PUBLIC_KEY> --sid <SHORT_ID>
 ```
 
-It prints four assertions and exits non-zero if any fails: text before the entry, text
-after the entry, untouched keys inside the entry, group references updated.
-`templates/mihomo-proxy-block.yaml` is a shape reference only — never the base.
+It prints its assertions and exits non-zero if any fails: text before the entry, text after
+the entry, untouched keys, group references, and no surviving `<PLACEHOLDER>`.
 
 ## When it breaks
 
