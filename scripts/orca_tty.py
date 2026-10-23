@@ -122,7 +122,7 @@ def _set_state(handle: str, state: str) -> None:
 
 # A prompt that is asking for a credential is not a shell prompt, no matter what the
 # caller's regex says. 'root@host's password:' matches `root@.*` all too easily.
-AUTH_HINTS = ("password:", "passphrase for key", "continue connecting", "[yes/no]")
+AUTH_HINTS = ("password:", "passphrase", "continue connecting", "[yes/no]")
 
 
 def _is_auth_prompt(line: str) -> bool:
