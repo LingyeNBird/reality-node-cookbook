@@ -29,7 +29,8 @@ Every `[SERVER]` block opens with an `ORCA=yes` guard and does nothing when the 
 ### Session and terminal
 
 5. **MUST have a shell before running anything.** A created terminal is not a session, and its buffer is not output.
-6. **After `create`, the only permitted next action is `wait-prompt`.** MUST NOT send, land a script, or run **any** command anywhere — local screening, downloads and candidate generation included — until `:~#` has been observed. Waiting on a human is not idle time to be filled with the next stage. Tooling enforces the write half: a handle in `awaiting-auth` rejects sends.
+6. **`create` is followed by a question, not a wait.** The credential is the user's, so the next action is to tell them where to type it and **end the turn**. MUST NOT block on a wait, MUST NOT poll in a loop, and MUST NOT start any other work — local screening, downloads or candidate generation included — while the login is pending.
+   - **Confirm exactly once, after they say they are in.** Then call `wait-prompt --timeout 20` a single time to check the prompt is on screen. A miss means they are not in yet: say so and end the turn again. That timeout is **not a deadline for the user** — it bounds only how long we look at the screen after they told us they were done; their typing is unbounded. MUST NOT extend it or retry.
    - **The session MUST be marked, and every `[SERVER]` block MUST check the mark.** Once the prompt appears, `export ORCA=yes` MUST be present in that shell (`wait-prompt` does this by itself). Every subsequent block provided for that session MUST open with the `ORCA=yes` guard and MUST do nothing when it is unset. A block that cannot be guarded MUST NOT be provided at all.
 7. **Credentials are the user's.** MUST NOT type or store a passphrase or password, MUST NOT assume it was entered, MUST NOT act while the screen still shows an auth prompt.
 8. **MUST only touch terminals this tool created.** MUST NOT read or write any other handle — including the agent's own terminal — and MUST NOT bypass the fence with a direct `orca terminal read|send`.
@@ -153,8 +154,16 @@ Use `scripts/orca_tty.py` rather than raw `orca` calls; it encodes the pitfalls.
 python scripts/orca_tty.py list
 python scripts/orca_tty.py create --title "node work" \
   --command 'ssh -o PreferredAuthentications=publickey -o IdentitiesOnly=yes -o ServerAliveInterval=15 -p <CURRENT_SSH_PORT> -i "<LOCAL_KEY_PATH>" root@<SERVER_IP>'
-python scripts/orca_tty.py wait-prompt --terminal <HANDLE> --pattern 'root@.*:~#' --timeout 150
 ```
+
+**Then stop.** Say "type your credential in that terminal and tell me when you are in", and end the turn. Their typing time is unbounded — there is nothing to wait on.
+
+```bash
+# [LOCAL] next turn, once they say they are in — one check, 20s
+python scripts/orca_tty.py wait-prompt --terminal <HANDLE> --pattern 'root@.*:~#' --timeout 20
+```
+
+A miss means they are not in yet: say so, end the turn again. Do not extend the timeout, do not loop.
 
 `-p` is the **current** port. If the host is still on password auth the same command works — the user types the password at the prompt. Moving the port is §2, not here.
 

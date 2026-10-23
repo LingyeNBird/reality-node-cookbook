@@ -72,9 +72,17 @@ question, not a puzzle.
 python scripts/orca_tty.py list
 python scripts/orca_tty.py create --title "node" \
   --command 'ssh -o PreferredAuthentications=publickey -o IdentitiesOnly=yes -o ServerAliveInterval=15 -p <SSH_PORT> -i "<LOCAL_KEY_PATH>" root@<SERVER_IP>'
-# the user types the key passphrase; wait for the remote prompt
-python scripts/orca_tty.py wait-prompt --terminal <HANDLE> --pattern ':~#\s*$'
 ```
+
+**Then stop** and tell the user to type the credential, and when they are in. Their typing
+time is unbounded.
+
+```bash
+# [LOCAL] next turn, once they confirm — one check, 20s (not a deadline for them)
+python scripts/orca_tty.py wait-prompt --terminal <HANDLE> --pattern ':~#\s*$' --timeout 20
+```
+
+A miss means they are not in yet: say so and end the turn again — do not extend or loop.
 
 Ask the user not to toggle TUN / system proxy while the session is in use: an
 interactive SSH session over a TUN interface dies the moment TUN goes off.

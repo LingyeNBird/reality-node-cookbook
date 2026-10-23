@@ -229,8 +229,8 @@ def cmd_create(cli: str, args) -> int:
     print(f"# title={term.get('title')} worktree={term.get('worktreeId')} state={state}",
           file=sys.stderr)
     if needs_login:
-        print("# next: wait-prompt --pattern ':~#\\s*$'  — the user types the credential",
-              file=sys.stderr)
+        print("# next: ask the user to enter the credential here, then END THE TURN — "
+              "confirm with wait-prompt only after they say they are in", file=sys.stderr)
     return 0
 
 
@@ -266,6 +266,10 @@ def cmd_send_script(cli: str, args) -> int:
 
 
 def cmd_wait_prompt(cli: str, args) -> int:
+    if args.timeout > 60:
+        print("# warning: a wait this long usually means the user was never actually asked. "
+              "The timeout bounds only the post-confirmation check, never their typing.",
+              file=sys.stderr)
     pattern = re.compile(args.pattern)
     deadline = time.time() + args.timeout
     cursor = args.cursor
@@ -352,8 +356,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("wait-prompt")
     p.add_argument("--terminal", required=True)
     p.add_argument("--pattern", required=True)
-    p.add_argument("--timeout", type=float, default=150)
-    p.add_argument("--interval", type=float, default=5)
+    p.add_argument("--timeout", type=float, default=20,
+                   help="how long to look at the screen AFTER the user says they are in; "
+                        "it is not a deadline for their typing (default 20s)")
+    p.add_argument("--interval", type=float, default=3)
     p.add_argument("--cursor", default=None)
     p.set_defaults(fn=cmd_wait_prompt)
 
