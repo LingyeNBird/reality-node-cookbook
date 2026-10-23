@@ -29,7 +29,7 @@ Every `[SERVER]` block opens with an `ORCA=yes` guard and does nothing when the 
 ### Session and terminal
 
 5. **MUST have a shell before running anything.** A created terminal is not a session, and its buffer is not output.
-6. **After `create`, the only permitted next action is `wait-prompt`.** MUST NOT send, land a script or run anything until `:~#` has been observed. Tooling enforces this: a handle in `awaiting-auth` rejects writes.
+6. **After `create`, the only permitted next action is `wait-prompt`.** MUST NOT send, land a script, or run **any** command anywhere — local screening, downloads and candidate generation included — until `:~#` has been observed. Waiting on a human is not idle time to be filled with the next stage. Tooling enforces the write half: a handle in `awaiting-auth` rejects sends.
    - **The session MUST be marked, and every `[SERVER]` block MUST check the mark.** Once the prompt appears, `export ORCA=yes` MUST be present in that shell (`wait-prompt` does this by itself). Every subsequent block provided for that session MUST open with the `ORCA=yes` guard and MUST do nothing when it is unset. A block that cannot be guarded MUST NOT be provided at all.
 7. **Credentials are the user's.** MUST NOT type or store a passphrase or password, MUST NOT assume it was entered, MUST NOT act while the screen still shows an auth prompt.
 8. **MUST only touch terminals this tool created.** MUST NOT read or write any other handle — including the agent's own terminal — and MUST NOT bypass the fence with a direct `orca terminal read|send`.
@@ -237,27 +237,37 @@ curl -sS -o /dev/null -w 'github=%{http_code}\n' --max-time 15 https://api.githu
 
 Leave any pre-existing proxy daemon strictly alone: different unit name, different port.
 
-## 4. Port and SNI
+## 4. Port and cover site
 
-**Port: 443.** Reality's whole value is that the IP genuinely serves a real TLS site there. A high port turns the camouflage into "some site on an odd port". Only move if 443 is occupied.
+**Do not start this section before §1 and §2 have passed their gates.** Screening is cheap, which is exactly why it gets started while a login is still pending and turns into a false sense of progress.
 
-**SNI target** — all of these must hold:
+**Port: 443.** Reality's whole value is that the IP genuinely serves a real TLS site there. A high port turns the camouflage into "some site on an odd port". Only move if 443 is occupied — and the port is the user's decision anyway (rule 13).
 
-- TLS 1.3, X25519 key exchange, ALPN `h2`, certificate chain valid for that hostname.
-- **Not Cloudflare**, and ideally not any CDN/WAF: a plain origin (shared hosting, small VPS, regional ISP) is the best camouflage.
-- A real, stable, low-profile company site, ideally in the same region as the node.
-- **Reachable from the node itself.** Reality relays every unauthenticated handshake to this host; if the node cannot reach it, the node is dead for every client too.
+**Candidates: you generate them.** The user gives constraints in §0 — region, anything to avoid, or "you pick" — and is not expected to hand over a list. A list they volunteer is a better seed; one they never offered is not a prerequisite.
 
-Screen candidates locally, then verify on the node:
+What qualifies as a cover site:
+
+- a real, stable, **low-profile company** site: a few-person business, not a university, government body, transit authority, school district, news outlet, or anything whose outage makes the news;
+- **never** `.gov`, `.edu`, `.mil` or a public institution — high profile, usually CDN-fronted, and a poor thing to hide traffic behind;
+- TLS 1.3, X25519, ALPN `h2`, chain valid for that name; **not Cloudflare**, ideally no CDN/WAF at all (a plain origin — shared hosting, small VPS, regional ISP — is the best camouflage);
+- in the same region as the node;
+- **reachable from the node**, which is the only place that fact can be measured.
+
+**Screen on the node, in one pass.** A single probe there answers both open questions — usable as a cover, and reachable from this node — and the second one cannot be answered anywhere else. Local screening answers only the first, and it answers it about your own network, so it decides nothing:
 
 ```bash
-# [LOCAL] screen candidates on your machine
-python scripts/sni_screen.py --file candidates.txt
-# [SERVER] then verify each survivor from the node — the decisive check
-[ "${ORCA:-}" = yes ] && bash /root/sni_check_on_host.sh <candidate> [<candidate> ...]
+# [SERVER] screen and prove reachability at the same time — this is the decision
+[ "${ORCA:-}" = yes ] && bash /root/sni_check_on_host.sh --file /root/candidates.txt
 ```
 
-`scripts/sni_screen.py` encodes two traps that silently produce garbage results:
+A local pre-filter is optional, only for long lists, and only after §1's gate has passed — it triages, it never decides:
+
+```bash
+# [LOCAL] optional triage; its verdict means nothing about the node
+python scripts/sni_screen.py --file candidates.txt
+```
+
+If you do use the local pre-filter, `scripts/sni_screen.py` encodes two traps that silently produce garbage results:
 
 - **A local Clash/proxy in fake-ip mode poisons plain DNS.** Every lookup returns the fake range (e.g. `198.18.0.0/15`), so an "is it Cloudflare" check passes everything. The script resolves over DoH and connects to the resolved IP with an explicit SNI, bypassing the local resolver.
 - **Cloudflare's published range list is not exhaustive.** Some Cloudflare-fronted space sits outside it, and some platform ranges are announced by unrelated ASNs. The script cross-checks the ASN holder and flags CDN/WAF owners explicitly.

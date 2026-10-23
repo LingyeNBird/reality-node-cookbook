@@ -15,8 +15,8 @@ SKILL.md                              the procedure, with the pitfalls
 README.md                             this file: ordered commands
 scripts/orca_tty.py                   drive an Orca terminal; only handles it created itself
 scripts/ssh_harden.sh                 staged SSH hardening: key install, port move, password off
-scripts/sni_screen.py                 screen SNI candidates locally (DoH + ASN + TLS probe)
-scripts/sni_check_on_host.sh          verify candidates FROM THE NODE (decisive)
+scripts/sni_check_on_host.sh          screen AND prove reachability from the node — the decision
+scripts/sni_screen.py                 optional local pre-filter (DoH + ASN + TLS probe); decides nothing
 scripts/node_setup.sh                 install/configure/restart the node (idempotent, SNI-swappable)
 scripts/node_verify.py                probe the node from outside (camouflage + health)
 scripts/client_e2e.py                 run a real client and compare three egress paths
@@ -120,18 +120,28 @@ Both port commands refuse a port that is already bound — checked with `ss` and
 attempt — and `converge-port` snapshots the previous configuration, verifies the new port
 is actually listening, and rolls back when it is not.
 
-### 1. Pick the SNI target
+### 1. Pick the cover site
+
+Candidates come from **you**, not from the user: §0 supplies the constraints (region, what
+to avoid, or "you pick"). Screen them **on the node** — one probe answers both "usable as a
+cover" and "reachable from here", and only the node can answer the second.
 
 ```bash
-# [LOCAL] screen candidates on your machine (DoH, so a fake-ip proxy cannot poison it)
-python scripts/sni_screen.py --file candidates.txt
-
-# [SERVER] then verify each survivor from the node — the decisive check
-[ "${ORCA:-}" = yes ] && bash /root/sni_check_on_host.sh <candidate> [<candidate> ...]
+# [SERVER] screen and prove reachability at the same time — this is the decision
+# (land the list in /root first, the same way as any other file)
+[ "${ORCA:-}" = yes ] && bash /root/sni_check_on_host.sh --file /root/candidates.txt
 ```
 
-Requirements: TLS 1.3 + X25519 + ALPN h2 + valid chain, no Cloudflare (ideally no CDN at
-all), a real low-profile company site, and reachable from the node.
+Requirements: TLS 1.3 + X25519 + ALPN h2 + a valid chain, no Cloudflare (ideally no CDN at
+all), a real low-profile **company** site — never `.gov` / `.edu` / `.mil` or a public
+institution — and reachable from the node.
+
+A local pre-filter is optional, for long lists, and only after §1's gate; it decides nothing:
+
+```bash
+# [LOCAL] optional triage; its verdict says nothing about the node
+python scripts/sni_screen.py --file candidates.txt
+```
 
 ### 2. Provision the node
 
