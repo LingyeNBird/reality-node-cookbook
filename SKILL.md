@@ -1,6 +1,6 @@
 ---
 name: singbox-reality-node-runbook
-description: End-to-end runbook for taking a bare VPS to a working sing-box VLESS+Reality node through an Orca terminal — staged SSH access hardening (key install, port move, password shutdown), Orca session mechanics, port and non-Cloudflare SNI selection, secret generation, a hardened systemd unit, camouflage and end-to-end verification, client profile generation, and the failure modes that actually happen in production.
+description: End-to-end runbook for taking a bare VPS to a working sing-box VLESS+Reality node through an Orca terminal — collecting the inputs from the user up front (never inferring them from the machine), staged SSH access hardening (key install, port move, password shutdown), Orca session mechanics, port and non-Cloudflare SNI selection, secret generation, a hardened systemd unit, camouflage and end-to-end verification, client profile generation, and the failure modes that actually happen in production.
 ---
 
 # sing-box VLESS+Reality node runbook
@@ -9,11 +9,37 @@ Portable procedure. Every host, port, domain, key, and path appears as a placeho
 
 Scripts referenced below live in `scripts/`, templates in `templates/`. Read `README.md` for the ordered command sequence.
 
-## 0. What you are producing
+**What you are producing:** a remote VPS running sing-box VLESS+Reality on TCP/443, an importable Clash/mihomo profile, and the evidence that both work — camouflage probe, real-client egress, restart survival.
 
-1. A remote VPS running sing-box with a VLESS+Reality inbound on TCP/443.
-2. An importable Clash/mihomo profile for the client.
-3. Evidence that both work: camouflage probe, real-client egress, restart survival.
+## 0. Ask for the inputs first
+
+The first action is a question, not an exploration. Every later step is wrong if the target is wrong, and a wrong target costs someone a server.
+
+Collect all of it in **one** batch — do not drip-feed questions:
+
+| Need | Why it must come from the user |
+|---|---|
+| server address (IP or hostname) | several hosts are usually in play; "the server" is ambiguous |
+| SSH port | may already have been moved off 22 |
+| how to authenticate | key path plus a passphrase **the user types**, or still password-only |
+| whether SSH must be hardened first, and **which new port** | their call: it ends up in their client config, their firewall, their notes |
+| cover-site constraints | region, things to avoid, or "you pick" |
+| client and delivery | which client, and whether the profile is a local file or a hosted subscription |
+
+If any of these is missing, stop and ask. One round trip is cheaper than a wrong host, a wrong port, or a lockout.
+
+### Forbidden: inferring the target from the machine
+
+Never work out which server, port, or credential to use by reading the environment. Specifically forbidden, with no "just to help" exception:
+
+- `~/.ssh/` in any form — `known_hosts`, `known_hosts.old`, `config`, keys, `authorized_keys`;
+- shell history, cloud CLI inventories (`~/.aws`, `gcloud` configs), password-manager exports;
+- any `*config*` directory, project `.env`, CI secrets;
+- probe/scan hosts you discovered that way "to see which one is up".
+
+`known_hosts` is an inventory of every host the user has ever connected to, non-standard ports included. Reading it is a data leak, not research, and it is exactly the shortcut that turns "configure the server" into "enumerate the user's infrastructure".
+
+"Configure the server" with no server named is a question to ask, not a puzzle to solve. The same applies to the port and to the cover site: those are decisions, not defaults.
 
 ## 1. Preconditions, and Stage 0 when they are not met
 

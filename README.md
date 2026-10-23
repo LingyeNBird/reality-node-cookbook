@@ -37,6 +37,28 @@ templates/mihomo-proxy-block.yaml     client proxy block
 | `<UUID>` / `<PUBLIC_KEY>` / `<SHORT_ID>` | client credentials, printed by `node_setup.sh` |
 | `<PORT>` | node's listen port (443 unless taken) |
 
+## Before anything: ask for the inputs
+
+The run below starts from information only the user has. Ask for all of it in one batch
+before running a single command — one round trip is cheaper than a wrong host or a lockout.
+
+| Need | Why it cannot be inferred |
+|---|---|
+| server address | several hosts are usually in play; "the server" is ambiguous |
+| SSH port | may already have been moved off 22 |
+| how to authenticate | key path with a passphrase the user types, or still password-only |
+| whether SSH must be hardened, and **which new port** | their decision; it lands in their client config and firewall |
+| cover-site constraints | region, things to avoid, or "you pick" |
+| client and delivery | which client, and local file or hosted subscription |
+
+**Forbidden — do not discover the target by enumeration.** Never read `~/.ssh/`
+(`known_hosts`, `known_hosts.old`, `config`, keys), shell history, cloud CLI inventories,
+or any `*config*` directory to work out which server, port or credential to use.
+`known_hosts` is an inventory of every host the user has ever connected to, non-standard
+ports included: reading it is a leak, not research. And never then probe the hosts you
+found that way "to see which one is up". "Configure the server" without a name is a
+question, not a puzzle.
+
 ## Ordered run
 
 ### 0. Get a shell on the node
