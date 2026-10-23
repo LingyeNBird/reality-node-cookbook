@@ -185,20 +185,37 @@ cmd_preflight() {
 
 cmd_install_key() {
   local pub="${1:-}"
-  [ -n "$pub" ] || die "usage: $0 install-key <public-key-file>"
+  [ -n "$pub" ] || die "usage: $0 install-key <public-key-file|->"
+  local staged=""
+  if [ "$pub" = "-" ]; then
+    # Accept the key on stdin: it usually starts life on the client, so staging it to a
+    # file on the server first is an extra step that only exists to be forgotten.
+    staged=$(mktemp)
+    cat > "$staged"
+    pub="$staged"
+  fi
   [ -f "$pub" ] || die "not found: $pub"
-  say "installing key from $pub"
+  if [ ! -s "$pub" ]; then
+    [ -n "$staged" ] && rm -f "$staged"
+    die "public key is empty"
+  fi
+  say "installing key from $([ -n "$staged" ] && echo stdin || echo "$pub")"
   install -d -m 0700 /root/.ssh
   touch /root/.ssh/authorized_keys
   chmod 0600 /root/.ssh/authorized_keys
   local blob
   blob=$(awk '{print $2}' "$pub" | head -1)
+  if [ -z "$blob" ]; then
+    [ -n "$staged" ] && rm -f "$staged"
+    die "could not read a key blob from the input"
+  fi
   if grep -qF "$blob" /root/.ssh/authorized_keys 2>/dev/null; then
     note "key already present, not duplicating"
   else
     cat "$pub" >> /root/.ssh/authorized_keys
     note "appended"
   fi
+  [ -n "$staged" ] && rm -f "$staged"
   ls -la /root/.ssh
   echo
   warn "now prove a NEW key-only login from outside before changing anything else:"

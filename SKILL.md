@@ -41,44 +41,35 @@ Never work out which server, port, or credential to use by reading the environme
 
 "Configure the server" with no server named is a question to ask, not a puzzle to solve. The same applies to the port and to the cover site: those are decisions, not defaults.
 
-## 1. Preconditions, and Stage 0 when they are not met
+## 1. Open a session through Orca
 
-- Confirm which server the user actually means before touching anything. Several hosts may be open in several tabs.
-- SSH access must work with a **passphrase-protected key**, and the passphrase stays with the user (a password manager). Never write it to disk, never echo it.
-- If the host is still on password auth, or the user wants SSH moved to a high port, do that first with `scripts/ssh_harden.sh`. It is staged so that no step can lock you out:
-
-```bash
-bash scripts/ssh_harden.sh status                    # effective policy + which file wins
-bash scripts/ssh_harden.sh preflight                 # what this host actually reads
-bash scripts/ssh_harden.sh install-key <pubkey.pub>  # append + fix modes
-#   -> prove a key-only login from OUTSIDE on the current port
-bash scripts/ssh_harden.sh stage-port <new-port>     # old + new both listening
-#   -> prove a login from OUTSIDE on the NEW port: this is the gate
-bash scripts/ssh_harden.sh converge-port <new-port>  # new port only
-bash scripts/ssh_harden.sh disable-password          # then prove password is refused
-```
-
-Two traps it encodes, both of which make a naive fix silently do nothing:
-
-- **A drop-in cannot override the main file above `Include`.** OpenSSH keeps the FIRST obtained value and `Include` sits partway down `sshd_config`, while vendor images often set live directives above it. `ssh_harden.sh status` prints which source wins for every keyword, and the setters edit that source rather than adding another file that loses.
-- **Recent Ubuntu is socket-activated** (`ssh.socket`, `Accept=no`): a `Port` line in `sshd_config` is inert because `ListenStream` on the socket unit owns the port. Change the unit, `daemon-reload`, then restart **both** `ssh.socket` and `ssh.service` so sshd inherits the new fds.
-
-Never converge the port before a fresh login on the new port has succeeded from outside. An existing session is not proof, and neither is a listening socket.
-
-**Stop at the port step and ask the user which port to use.** It is their decision: the value ends up in their client config, their provider's firewall rules and their notes. Do not invent one and do not "just pick a random high port". Say what makes a good choice (anything from 1024 up; avoid the host's ephemeral range, which is `cat /proc/sys/net/ipv4/ip_local_port_range`; avoid the well-known alternate ports that scanners try first), then wait for an answer before running `stage-port`.
-
-`stage-port` and `converge-port` both refuse a port that is already bound — checked twice, with `ss` and an actual bind attempt — and `converge-port` snapshots the old configuration, verifies the new port really listens, and rolls back if it does not. Converging is the one step that removes the old port, so a failed bind there would otherwise leave no listener at all.
-
-## 2. Driving the session through Orca
+Everything after this runs **on the server**, so the shell comes first — including the SSH hardening in §2. Without a live session there is nothing to execute.
 
 Use `scripts/orca_tty.py` rather than raw `orca` calls; it encodes the pitfalls.
 
 ```bash
 python scripts/orca_tty.py list
 python scripts/orca_tty.py create --title "node work" \
-  --command 'ssh -o PreferredAuthentications=publickey -o IdentitiesOnly=yes -o ServerAliveInterval=15 -p <SSH_PORT> -i "<LOCAL_KEY_PATH>" root@<SERVER_IP>'
+  --command 'ssh -o PreferredAuthentications=publickey -o IdentitiesOnly=yes -o ServerAliveInterval=15 -p <CURRENT_SSH_PORT> -i "<LOCAL_KEY_PATH>" root@<SERVER_IP>'
 python scripts/orca_tty.py wait-prompt --terminal <HANDLE> --pattern 'root@.*:~#' --timeout 150
-python scripts/orca_tty.py run-script --terminal <HANDLE> --file scripts/node_setup.sh
+```
+
+`-p` is the **current** port. If the host is still on password auth the same command works — the user types the password at the prompt. Moving the port is §2, not here.
+
+### Getting a script onto the remote
+
+Two shapes. Picking the wrong one is why a parameterised script appears to do nothing:
+
+| Script | How to run it |
+|---|---|
+| no arguments, does a whole task | `run-script --file <path>` — base64-encodes it, pipes it into `bash` |
+| takes arguments or subcommands | `send-script --file <path>` to land it, then `send --text 'bash /root/<name> preflight'` |
+
+`run-script` has no argument slot: it feeds the file to `bash` on stdin, so `ssh_harden.sh preflight` must be a separate `send`. Files that start life on the client — a public key, a config — travel the same way:
+
+```bash
+python scripts/orca_tty.py send --terminal <HANDLE> \
+  --text 'echo <base64-of-file> | base64 -d > /root/incoming.pub'
 ```
 
 Hard rules, learned the hard way:
@@ -92,6 +83,37 @@ Hard rules, learned the hard way:
 - **`terminal_handle_stale` means the Orca app restarted** and took the session with it. Re-list terminals, create a new one, ask the user to authenticate again. Do not assume the old session still runs commands.
 - **Ask the user not to toggle TUN / system proxy while you work.** An interactive SSH session routed over a TUN interface dies the moment TUN is switched off, mid-command, and the change you were applying may not have landed.
 - **Never print the private key.** Generate secrets inside the remote script, keep them in shell variables, echo only public values (public key, uuid, short_id).
+
+## 2. Preconditions, and Stage 0 when they are not met
+
+- SSH access must work with a **passphrase-protected key**, and the passphrase stays with the user (a password manager). Never write it to disk, never echo it.
+- If the host is still on password auth, or the user wants SSH moved to a high port, harden it now with `scripts/ssh_harden.sh`, **inside the session opened in §1**. It is staged so that no step can lock you out:
+
+```bash
+# land the script first (§1), then drive its subcommands
+bash /root/ssh_harden.sh status
+bash /root/ssh_harden.sh preflight
+echo <base64-of-pubkey> | base64 -d > /root/incoming.pub
+bash /root/ssh_harden.sh install-key /root/incoming.pub   # or: install-key - < /root/incoming.pub
+#   -> prove a key-only login from OUTSIDE on the current port
+bash /root/ssh_harden.sh stage-port <user-chosen-port>
+#   -> prove a login from OUTSIDE on the NEW port: this is the gate
+bash /root/ssh_harden.sh converge-port <user-chosen-port>
+bash /root/ssh_harden.sh disable-password
+```
+
+The public key starts on the client while the script runs on the server, so it has to be staged first; `install-key -` also reads it from stdin. When the port moves, the session you are holding stays alive on the old port — expected, and actually useful as a fallback.
+
+Two traps it encodes, both of which make a naive fix silently do nothing:
+
+- **A drop-in cannot override the main file above `Include`.** OpenSSH keeps the FIRST obtained value and `Include` sits partway down `sshd_config`, while vendor images often set live directives above it. `ssh_harden.sh status` prints which source wins for every keyword, and the setters edit that source rather than adding another file that loses.
+- **Recent Ubuntu is socket-activated** (`ssh.socket`, `Accept=no`): a `Port` line in `sshd_config` is inert because `ListenStream` on the socket unit owns the port. Change the unit, `daemon-reload`, then restart **both** `ssh.socket` and `ssh.service` so sshd inherits the new fds.
+
+Never converge the port before a fresh login on the new port has succeeded from outside. An existing session is not proof, and neither is a listening socket.
+
+**Stop at the port step and ask the user which port to use.** It is their decision: the value ends up in their client config, their provider's firewall rules and their notes. Do not invent one and do not "just pick a random high port". Say what makes a good choice (anything from 1024 up; avoid the host's ephemeral range, which is `cat /proc/sys/net/ipv4/ip_local_port_range`; avoid the well-known alternate ports that scanners try first), then wait for an answer before running `stage-port`.
+
+`stage-port` and `converge-port` both refuse a port that is already bound — checked twice, with `ss` and an actual bind attempt — and `converge-port` snapshots the old configuration, verifies the new port really listens, and rolls back if it does not. Converging is the one step that removes the old port, so a failed bind there would otherwise leave no listener at all.
 
 ## 3. Recon (read-only)
 

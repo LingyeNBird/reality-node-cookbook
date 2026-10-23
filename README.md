@@ -97,7 +97,7 @@ bash scripts/ssh_harden.sh disable-password
 ```
 
 Do not converge the port on the strength of a listening socket — a fresh login from
-outside on the new port is the only acceptable proof. `SKILL.md` §1 explains the two
+outside on the new port is the only acceptable proof. `SKILL.md` §2 explains the two
 precedence traps this handles: drop-ins cannot override the main file above `Include`, and
 a socket-activated sshd ignores `Port` entirely (`ListenStream` on `ssh.socket` owns it).
 
